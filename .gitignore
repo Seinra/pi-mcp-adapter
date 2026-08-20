@@ -14,3 +14,5 @@ worker-*.md
 plan.md
 triage-*.md
 review-*.md
+# Local Pi runtime state
+.atl/

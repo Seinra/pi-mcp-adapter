@@ -63,7 +63,9 @@ describe("direct tools auto auth", () => {
           connection = undefined;
         }),
         getConnection: vi.fn(() => connection),
-        getRequestOptions: vi.fn(() => ({ timeout: 4321 })),
+        getRequestOptions: vi.fn((_name, _signal, _protocolVersion) => ({
+          timeout: 4321,
+        })),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -94,7 +96,13 @@ describe("direct tools auto auth", () => {
     );
 
     const controller = new AbortController();
-    const result = await executor("id", { q: "hello" }, controller.signal, () => {}, undefined as any);
+    const result = await executor(
+      "id",
+      { q: "hello" },
+      controller.signal,
+      () => {},
+      undefined as any,
+    );
 
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
@@ -103,13 +111,22 @@ describe("direct tools auto auth", () => {
       { signal: controller.signal },
     );
     expect(state.manager.close).toHaveBeenCalledWith("demo");
-    expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connected.client.callTool).toHaveBeenCalledWith({
-      name: "namespace.tool",
-      arguments: { q: "hello" },
-      _meta: undefined,
-    }, { timeout: 4321 });
-    expect(result.content[0].text).toContain("ok");
+    expect(state.manager.getRequestOptions).toHaveBeenCalledWith(
+      "demo",
+      controller.signal,
+      undefined,
+    );
+    expect(connected.client.callTool).toHaveBeenCalledWith(
+      {
+        name: "namespace.tool",
+        arguments: { q: "hello" },
+        _meta: undefined,
+      },
+      { timeout: 4321 },
+    );
+    expect(
+      (result.content[0] as { type: "text"; text: string }).text,
+    ).toContain("ok");
   });
 
   it("surfaces aborted direct tool calls via the forwarded AbortSignal", async () => {
@@ -127,7 +144,9 @@ describe("direct tools auto auth", () => {
       config: { settings: {}, mcpServers: { demo: { command: "demo" } } },
       manager: {
         getConnection: vi.fn(() => connection),
-        getRequestOptions: vi.fn(() => requestOptions),
+        getRequestOptions: vi.fn(
+          (_name, _signal, _protocolVersion) => requestOptions,
+        ),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -137,23 +156,42 @@ describe("direct tools auto auth", () => {
     } as any;
     mocks.lazyConnect.mockResolvedValue(true);
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
 
-    const inFlight = executor("id", {}, controller.signal, undefined, undefined as any);
+    const inFlight = executor(
+      "id",
+      {},
+      controller.signal,
+      undefined,
+      undefined as any,
+    );
     await Promise.resolve();
     controller.abort(new Error("request aborted"));
 
     const result = await inFlight;
 
-    expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: undefined }, requestOptions);
+    expect(state.manager.getRequestOptions).toHaveBeenCalledWith(
+      "demo",
+      controller.signal,
+      undefined,
+    );
+    expect(connection.client.callTool).toHaveBeenCalledWith(
+      { name: "search", arguments: {}, _meta: undefined },
+      requestOptions,
+    );
     expect(result.details).toMatchObject({ error: "aborted", server: "demo" });
-    expect(result.content[0].text).toContain("request aborted");
+    expect(
+      (result.content[0] as { type: "text"; text: string }).text,
+    ).toContain("request aborted");
   });
 
   it("rethrows direct auto-auth cancellation", async () => {
@@ -165,10 +203,15 @@ describe("direct tools auto auth", () => {
     const state = {
       config: {
         settings: { autoAuth: true },
-        mcpServers: { demo: { url: "https://api.example.com/mcp", auth: "oauth" } },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
       },
       manager: {
         getConnection: vi.fn(() => ({ status: "needs-auth" })),
+        getRequestOptions: vi.fn(
+          (_name, _signal, _protocolVersion) => undefined,
+        ),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -179,14 +222,20 @@ describe("direct tools auto auth", () => {
     } as any;
     mocks.lazyConnect.mockResolvedValue(false);
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
 
-    await expect(executor("id", {}, controller.signal, undefined, undefined as any)).rejects.toBe(reason);
+    await expect(
+      executor("id", {}, controller.signal, undefined, undefined as any),
+    ).rejects.toBe(reason);
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
       "https://api.example.com/mcp",
@@ -208,6 +257,9 @@ describe("direct tools auto auth", () => {
       manager: {
         close: vi.fn(async () => {}),
         getConnection: vi.fn(() => ({ status: "needs-auth" })),
+        getRequestOptions: vi.fn(
+          (_name, _signal, _protocolVersion) => undefined,
+        ),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -230,22 +282,36 @@ describe("direct tools auto auth", () => {
       },
     );
 
-    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+    const result = await executor(
+      "id",
+      {},
+      undefined as any,
+      () => {},
+      undefined as any,
+    );
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toContain("auth-start");
-    expect(result.content[0].text).toContain("/mcp-auth demo");
+    expect(
+      (result.content[0] as { type: "text"; text: string }).text,
+    ).toContain("auth-start");
+    expect(
+      (result.content[0] as { type: "text"; text: string }).text,
+    ).toContain("/mcp-auth demo");
   });
 
   it("runs URL elicitations returned by a URL-required tool error", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+    const { UrlElicitationRequiredError } = await import(
+      "@modelcontextprotocol/client"
+    );
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const error = new UrlElicitationRequiredError([{
-      mode: "url",
-      message: "Connect your account",
-      elicitationId: "connect-1",
-      url: "https://example.com/connect",
-    }]);
+    const error = new UrlElicitationRequiredError([
+      {
+        mode: "url",
+        message: "Connect your account",
+        elicitationId: "connect-1",
+        url: "https://example.com/connect",
+      },
+    ]);
     const connection = {
       status: "connected",
       client: { callTool: vi.fn().mockRejectedValue(error) },
@@ -255,6 +321,9 @@ describe("direct tools auto auth", () => {
       manager: {
         getConnection: vi.fn(() => connection),
         handleUrlElicitationRequired: vi.fn().mockResolvedValue("accept"),
+        getRequestOptions: vi.fn(
+          (_name, _signal, _protocolVersion) => undefined,
+        ),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -264,17 +333,35 @@ describe("direct tools auto auth", () => {
     } as any;
     mocks.lazyConnect.mockResolvedValue(true);
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
-    const result = await executor("id", {}, undefined, undefined, undefined as any);
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
+    const result = await executor(
+      "id",
+      {},
+      undefined,
+      undefined,
+      undefined as any,
+    );
 
-    expect(state.manager.handleUrlElicitationRequired).toHaveBeenCalledWith("demo", error);
-    expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
-    expect(result.content[0].text).toContain("retry the tool");
+    expect(state.manager.handleUrlElicitationRequired).toHaveBeenCalledWith(
+      "demo",
+      error,
+    );
+    expect(result.details).toMatchObject({
+      error: "url_elicitation_required",
+      action: "accept",
+    });
+    expect(
+      (result.content[0] as { type: "text"; text: string }).text,
+    ).toContain("retry the tool");
   });
 
   it("uses custom authRequiredMessage in non-ui direct tool auth failures", async () => {
@@ -293,6 +380,9 @@ describe("direct tools auto auth", () => {
       manager: {
         close: vi.fn(async () => {}),
         getConnection: vi.fn(() => ({ status: "needs-auth" })),
+        getRequestOptions: vi.fn(
+          (_name, _signal, _protocolVersion) => undefined,
+        ),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -315,9 +405,17 @@ describe("direct tools auto auth", () => {
       },
     );
 
-    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+    const result = await executor(
+      "id",
+      {},
+      undefined as any,
+      () => {},
+      undefined as any,
+    );
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toBe("Reconnect demo from the host app.");
+    expect((result.content[0] as { type: "text"; text: string }).text).toBe(
+      "Reconnect demo from the host app.",
+    );
   });
 });

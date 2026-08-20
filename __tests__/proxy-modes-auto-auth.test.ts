@@ -39,23 +39,28 @@ vi.mock("../init.ts", () => ({
 
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
+  Client: vi.fn().mockImplementation(function (
+    this: any,
+    info: unknown,
+    options: unknown,
+  ) {
     this.info = info;
     this.options = options;
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
     this.connect = vi.fn((transport: unknown, requestOptions: unknown) =>
-      mocks.connectImpl(transport, requestOptions)
+      mocks.connectImpl(transport, requestOptions),
     );
     this.getServerCapabilities = vi.fn(() => ({ tools: {}, resources: {} }));
     this.listTools = vi.fn((params: unknown, requestOptions: unknown) =>
-      mocks.listToolsImpl(params, requestOptions)
+      mocks.listToolsImpl(params, requestOptions),
     );
     this.listResources = vi.fn((params: unknown, requestOptions: unknown) =>
-      mocks.listResourcesImpl(params, requestOptions)
+      mocks.listResourcesImpl(params, requestOptions),
     );
-    this.callTool = vi.fn((params: unknown, schema: unknown, requestOptions: unknown) =>
-      mocks.callToolImpl(params, schema, requestOptions)
+    this.callTool = vi.fn(
+      (params: unknown, schema: unknown, requestOptions: unknown) =>
+        mocks.callToolImpl(params, schema, requestOptions),
     );
     this.close = vi.fn(async () => undefined);
     mocks.clients.push(this);
@@ -65,7 +70,10 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
 }));
 
 vi.mock("@modelcontextprotocol/client/stdio", () => ({
-  StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
+  StdioClientTransport: vi.fn().mockImplementation(function (
+    this: any,
+    options: unknown,
+  ) {
     this.options = options;
     this.close = vi.fn(async () => undefined);
     mocks.transports.push(this);
@@ -123,7 +131,9 @@ describe("proxy auto auth", () => {
     manager.getConnection.mockReturnValueOnce(stale);
 
     const state = {
-      config: { mcpServers: { demo: { command: "node", args: ["server.js"] } } },
+      config: {
+        mcpServers: { demo: { command: "node", args: ["server.js"] } },
+      },
       manager,
       toolMetadata: new Map(),
       serverInstructions: new Map(),
@@ -133,11 +143,22 @@ describe("proxy auto auth", () => {
 
     const result = await executeConnect(state, "demo");
 
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, undefined);
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      stale,
+      undefined,
+    );
     expect(manager.connect).not.toHaveBeenCalled();
-    expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 1 });
+    expect(result.details).toMatchObject({
+      mode: "list",
+      server: "demo",
+      count: 1,
+    });
     expect(result.content[0].text).toContain("demo_fresh");
-    expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({ originalName: "fresh" });
+    expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({
+      originalName: "fresh",
+    });
   });
 
   it("keeps a same-server tool when another current sibling matches the selector", async () => {
@@ -152,34 +173,70 @@ describe("proxy auto auth", () => {
       prompts: [],
     };
     const state = {
-      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo", excludeTools: ["search_records"] } } },
-      manager: { getConnection: vi.fn(() => undefined), connect: vi.fn(async () => connection) },
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: {
+          demo: { command: "demo", excludeTools: ["search_records"] },
+        },
+      },
+      manager: {
+        getConnection: vi.fn(() => undefined),
+        connect: vi.fn(async () => connection),
+      },
       toolMetadata: new Map(),
       serverInstructions: new Map(),
       failureTracker: new Map(),
       ui: undefined,
     } as any;
 
-    await expect(executeConnect(state, "demo")).resolves.toMatchObject({ details: { mode: "list", server: "demo", count: 1 } });
-    expect(state.toolMetadata.get("demo")?.map((tool: any) => tool.name)).toEqual(["demo_search-records"]);
+    await expect(executeConnect(state, "demo")).resolves.toMatchObject({
+      details: { mode: "list", server: "demo", count: 1 },
+    });
+    expect(
+      state.toolMetadata.get("demo")?.map((tool: any) => tool.name),
+    ).toEqual(["demo_search-records"]);
   });
 
   it("ignores stale same-server metadata during executeConnect", async () => {
     const { executeConnect } = await import("../proxy-modes.ts");
-    const definition = { command: "demo", excludeTools: ["demo_search_records"] };
+    const definition = {
+      command: "demo",
+      excludeTools: ["demo_search_records"],
+    };
     const state = {
-      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: definition } },
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: { demo: definition },
+      },
       manager: {
         getConnection: vi.fn(() => undefined),
-        connect: vi.fn(async () => ({ status: "connected", tools: [{ name: "search-records", description: "New" }], resources: [], prompts: [] })),
+        connect: vi.fn(async () => ({
+          status: "connected",
+          tools: [{ name: "search-records", description: "New" }],
+          resources: [],
+          prompts: [],
+        })),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search_records", originalName: "search_records", description: "Old" }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search_records",
+              originalName: "search_records",
+              description: "Old",
+            },
+          ],
+        ],
+      ]),
       serverInstructions: new Map(),
       failureTracker: new Map(),
       ui: undefined,
     } as any;
 
-    await expect(executeConnect(state, "demo")).resolves.toMatchObject({ details: { mode: "list", server: "demo", count: 0 } });
+    await expect(executeConnect(state, "demo")).resolves.toMatchObject({
+      details: { mode: "list", server: "demo", count: 0 },
+    });
     expect(state.toolMetadata.get("demo")).toEqual([]);
   });
 
@@ -203,14 +260,29 @@ describe("proxy auto auth", () => {
         getConnection: vi.fn(() => undefined),
         connect: vi.fn(async () => connection),
       },
-      toolMetadata: new Map([["my_2d_server", [{ name: "my_2d_server_search_records", originalName: "search_records", description: "Other" }]]]),
+      toolMetadata: new Map([
+        [
+          "my_2d_server",
+          [
+            {
+              name: "my_2d_server_search_records",
+              originalName: "search_records",
+              description: "Other",
+            },
+          ],
+        ],
+      ]),
       serverInstructions: new Map(),
       failureTracker: new Map(),
       ui: undefined,
     } as any;
 
-    await expect(executeConnect(state, "my-server")).resolves.toMatchObject({ details: { mode: "list", server: "my-server", count: 1 } });
-    expect(state.toolMetadata.get("my-server")?.map((tool: any) => tool.name)).toEqual(["my-server_search-records"]);
+    await expect(executeConnect(state, "my-server")).resolves.toMatchObject({
+      details: { mode: "list", server: "my-server", count: 1 },
+    });
+    expect(
+      state.toolMetadata.get("my-server")?.map((tool: any) => tool.name),
+    ).toEqual(["my-server_search-records"]);
   });
 
   it("auto-authenticates and retries executeConnect once", async () => {
@@ -333,14 +405,18 @@ describe("proxy auto auth", () => {
   });
 
   it("runs URL elicitations returned by proxy tool calls", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+    const { UrlElicitationRequiredError } = await import(
+      "@modelcontextprotocol/client"
+    );
     const { executeCall } = await import("../proxy-modes.ts");
-    const error = new UrlElicitationRequiredError([{
-      mode: "url",
-      message: "Connect your account",
-      elicitationId: "connect-1",
-      url: "https://example.com/connect",
-    }]);
+    const error = new UrlElicitationRequiredError([
+      {
+        mode: "url",
+        message: "Connect your account",
+        elicitationId: "connect-1",
+        url: "https://example.com/connect",
+      },
+    ]);
     const connection = {
       status: "connected",
       client: { callTool: vi.fn().mockRejectedValue(error) },
@@ -355,20 +431,33 @@ describe("proxy auto auth", () => {
     const state = {
       config: { settings: {}, mcpServers: { demo: { command: "demo" } } },
       manager,
-      toolMetadata: new Map([["demo", [{
-        name: "demo_search",
-        originalName: "search",
-        description: "Search",
-        inputSchema: { type: "object", properties: {} },
-      }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
 
     const result = await executeCall(state, "demo_search", {}, "demo");
 
-    expect(manager.handleUrlElicitationRequired).toHaveBeenCalledWith("demo", error);
-    expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
+    expect(manager.handleUrlElicitationRequired).toHaveBeenCalledWith(
+      "demo",
+      error,
+    );
+    expect(result.details).toMatchObject({
+      error: "url_elicitation_required",
+      action: "accept",
+    });
   });
 
   it("auto-authenticates and retries executeCall once", async () => {
@@ -396,7 +485,11 @@ describe("proxy auto auth", () => {
         current = undefined;
       }),
       getConnection: vi.fn(() => current),
-      getRequestOptions: vi.fn(() => ({ timeout: 1234 })),
+      getRequestOptions: vi.fn(
+        (_name: string, _signal?: AbortSignal, _protocolVersion?: string) => ({
+          timeout: 1234,
+        }),
+      ),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -405,7 +498,11 @@ describe("proxy auto auth", () => {
     const statuses: string[] = [];
     const state = {
       config: {
-        settings: { autoAuth: true, toolPrefix: "server", showStatusIcon: false },
+        settings: {
+          autoAuth: true,
+          toolPrefix: "server",
+          showStatusIcon: false,
+        },
         mcpServers: {
           demo: { url: "https://api.example.com/mcp", auth: "oauth" },
         },
@@ -430,7 +527,14 @@ describe("proxy auto auth", () => {
     } as any;
 
     const controller = new AbortController();
-    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo", undefined, controller.signal);
+    const result = await executeCall(
+      state,
+      "demo_search",
+      { q: "hello" },
+      "demo",
+      undefined,
+      controller.signal,
+    );
 
     expect(statuses).toContain("MCP: connecting to demo...");
     expect(mocks.authenticate).toHaveBeenCalledWith(
@@ -440,12 +544,19 @@ describe("proxy auto auth", () => {
       { signal: controller.signal },
     );
     expect(manager.connect).toHaveBeenCalledTimes(1);
-    expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connected.client.callTool).toHaveBeenCalledWith({
-      name: "search",
-      arguments: { q: "hello" },
-      _meta: undefined,
-    }, { timeout: 1234 });
+    expect(manager.getRequestOptions).toHaveBeenCalledWith(
+      "demo",
+      controller.signal,
+      undefined,
+    );
+    expect(connected.client.callTool).toHaveBeenCalledWith(
+      {
+        name: "search",
+        arguments: { q: "hello" },
+        _meta: undefined,
+      },
+      { timeout: 1234 },
+    );
     expect(result.content[0].text).toContain("ok");
   });
 
@@ -458,7 +569,9 @@ describe("proxy auto auth", () => {
     const state = {
       config: {
         settings: { autoAuth: true, toolPrefix: "server" },
-        mcpServers: { demo: { url: "https://api.example.com/mcp", auth: "oauth" } },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
       },
       manager: {
         getConnection: vi.fn(() => ({ status: "needs-auth" })),
@@ -466,13 +579,34 @@ describe("proxy auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search", inputSchema: { type: "object" } }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object" },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
     } as any;
 
-    await expect(executeCall(state, "demo_search", {}, "demo", undefined, controller.signal)).rejects.toBe(reason);
+    await expect(
+      executeCall(
+        state,
+        "demo_search",
+        {},
+        "demo",
+        undefined,
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
       "https://api.example.com/mcp",
@@ -494,33 +628,63 @@ describe("proxy auto auth", () => {
     };
     const manager = {
       getConnection: vi.fn(() => connection),
-      getRequestOptions: vi.fn(() => requestOptions),
+      getRequestOptions: vi.fn(
+        (_name: string, _signal?: AbortSignal, _protocolVersion?: string) =>
+          requestOptions,
+      ),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
     };
     const state = {
-      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: { demo: { command: "demo" } },
+      },
       manager,
-      toolMetadata: new Map([["demo", [{
-        name: "demo_search",
-        originalName: "search",
-        description: "Search",
-        inputSchema: { type: "object", properties: {} },
-      }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
 
-    const inFlight = executeCall(state, "demo_search", {}, "demo", undefined, controller.signal);
+    const inFlight = executeCall(
+      state,
+      "demo_search",
+      {},
+      "demo",
+      undefined,
+      controller.signal,
+    );
     await Promise.resolve();
     controller.abort(new Error("request aborted"));
 
     const result = await inFlight;
 
-    expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: undefined }, requestOptions);
-    expect(result.details).toMatchObject({ error: "aborted", message: "request aborted" });
+    expect(manager.getRequestOptions).toHaveBeenCalledWith(
+      "demo",
+      controller.signal,
+      undefined,
+    );
+    expect(connection.client.callTool).toHaveBeenCalledWith(
+      { name: "search", arguments: {}, _meta: undefined },
+      requestOptions,
+    );
+    expect(result.details).toMatchObject({
+      error: "aborted",
+      message: "request aborted",
+    });
     expect(result.content[0].text).toContain("request aborted");
   });
 
@@ -532,16 +696,34 @@ describe("proxy auto auth", () => {
       client: { callTool: vi.fn(() => new Promise<never>(() => {})) },
     };
     const state = {
-      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: { demo: { command: "demo" } },
+      },
       manager: {
         getConnection: vi.fn(() => connection),
-        getRequestOptions: vi.fn((_name: string, signal?: AbortSignal) => signal ? { signal } : undefined),
+        getRequestOptions: vi.fn(
+          (_name: string, signal?: AbortSignal, _protocolVersion?: string) =>
+            signal ? { signal } : undefined,
+        ),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
       owner: { signal: owner.signal },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search", inputSchema: { type: "object" } }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object" },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -551,26 +733,50 @@ describe("proxy auto auth", () => {
     owner.abort(new Error("owner stopped"));
     const result = await inFlight;
 
-    expect(result.details).toMatchObject({ error: "aborted", message: "owner stopped" });
+    expect(result.details).toMatchObject({
+      error: "aborted",
+      message: "owner stopped",
+    });
   });
 
   it("fails closed when lazy metadata has duplicate exact tool names", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
     const firstCall = vi.fn();
     const secondCall = vi.fn();
-    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
-      state.toolMetadata.set(serverName, [{ name: "my_20_server_get", originalName: "get", description: serverName }]);
-      return true;
-    });
+    mocks.lazyConnect.mockImplementation(
+      async (state: any, serverName: string) => {
+        state.toolMetadata.set(serverName, [
+          {
+            name: "my_20_server_get",
+            originalName: "get",
+            description: serverName,
+          },
+        ]);
+        return true;
+      },
+    );
     const state = {
       config: {
         settings: { toolPrefix: "server" },
-        mcpServers: { "my server": { command: "first" }, my_20_server: { command: "second" } },
+        mcpServers: {
+          "my server": { command: "first" },
+          my_20_server: { command: "second" },
+        },
       },
       toolMetadata: new Map(),
       manager: {
-        getConnection: (serverName: string) => ({ status: "connected", client: serverName === "my server" ? { callTool: firstCall } : { callTool: secondCall } }),
-        getRequestOptions: () => undefined,
+        getConnection: (serverName: string) => ({
+          status: "connected",
+          client:
+            serverName === "my server"
+              ? { callTool: firstCall }
+              : { callTool: secondCall },
+        }),
+        getRequestOptions: (
+          _name: string,
+          _signal?: AbortSignal,
+          _protocolVersion?: string,
+        ) => undefined,
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -579,7 +785,9 @@ describe("proxy auto auth", () => {
       completedUiSessions: [],
     } as any;
 
-    await expect(executeCall(state, "my_20_server_get", {})).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    await expect(
+      executeCall(state, "my_20_server_get", {}),
+    ).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
     expect(mocks.lazyConnect).toHaveBeenCalledTimes(2);
     expect(firstCall).not.toHaveBeenCalled();
     expect(secondCall).not.toHaveBeenCalled();
@@ -587,24 +795,46 @@ describe("proxy auto auth", () => {
 
   it("prefers a lazy exact match over a normalized fallback", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const exactCall = vi.fn(async () => ({ content: [{ type: "text", text: "exact" }] }));
+    const exactCall = vi.fn(async () => ({
+      content: [{ type: "text", text: "exact" }],
+    }));
     const fallbackCall = vi.fn();
-    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
-      state.toolMetadata.set(serverName, [serverName === "foo"
-        ? { name: "foo_ge_t", originalName: "ge_t", description: "Exact" }
-        : { name: "foo_ge-t", originalName: "ge-t", description: "Fallback" },
-      ]);
-      return true;
-    });
+    mocks.lazyConnect.mockImplementation(
+      async (state: any, serverName: string) => {
+        state.toolMetadata.set(serverName, [
+          serverName === "foo"
+            ? { name: "foo_ge_t", originalName: "ge_t", description: "Exact" }
+            : {
+                name: "foo_ge-t",
+                originalName: "ge-t",
+                description: "Fallback",
+              },
+        ]);
+        return true;
+      },
+    );
     const state = {
       config: {
         settings: { toolPrefix: "short" },
-        mcpServers: { foo: { command: "exact" }, "foo-mcp": { command: "fallback" } },
+        mcpServers: {
+          foo: { command: "exact" },
+          "foo-mcp": { command: "fallback" },
+        },
       },
       toolMetadata: new Map(),
       manager: {
-        getConnection: (serverName: string) => ({ status: "connected", client: serverName === "foo" ? { callTool: exactCall } : { callTool: fallbackCall } }),
-        getRequestOptions: () => undefined,
+        getConnection: (serverName: string) => ({
+          status: "connected",
+          client:
+            serverName === "foo"
+              ? { callTool: exactCall }
+              : { callTool: fallbackCall },
+        }),
+        getRequestOptions: (
+          _name: string,
+          _signal?: AbortSignal,
+          _protocolVersion?: string,
+        ) => undefined,
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -613,7 +843,9 @@ describe("proxy auto auth", () => {
       completedUiSessions: [],
     } as any;
 
-    await expect(executeCall(state, "foo_ge_t", {})).resolves.toMatchObject({ details: { server: "foo", tool: "ge_t" } });
+    await expect(executeCall(state, "foo_ge_t", {})).resolves.toMatchObject({
+      details: { server: "foo", tool: "ge_t" },
+    });
     expect(exactCall).toHaveBeenCalledOnce();
     expect(fallbackCall).not.toHaveBeenCalled();
   });
@@ -621,19 +853,28 @@ describe("proxy auto auth", () => {
   it("fails closed when lazy metadata has duplicate normalized tool names", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
     const callTool = vi.fn();
-    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
-      state.toolMetadata.set(serverName, [
-        { name: "demo_a-b_c", originalName: "a-b_c", description: "First" },
-        { name: "demo_a_b-c", originalName: "a_b-c", description: "Second" },
-      ]);
-      return true;
-    });
+    mocks.lazyConnect.mockImplementation(
+      async (state: any, serverName: string) => {
+        state.toolMetadata.set(serverName, [
+          { name: "demo_a-b_c", originalName: "a-b_c", description: "First" },
+          { name: "demo_a_b-c", originalName: "a_b-c", description: "Second" },
+        ]);
+        return true;
+      },
+    );
     const state = {
-      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: { demo: { command: "demo" } },
+      },
       toolMetadata: new Map(),
       manager: {
         getConnection: () => ({ status: "connected", client: { callTool } }),
-        getRequestOptions: () => undefined,
+        getRequestOptions: (
+          _name: string,
+          _signal?: AbortSignal,
+          _protocolVersion?: string,
+        ) => undefined,
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -642,7 +883,9 @@ describe("proxy auto auth", () => {
       completedUiSessions: [],
     } as any;
 
-    await expect(executeCall(state, "demo_a_b_c", {})).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    await expect(executeCall(state, "demo_a_b_c", {})).resolves.toMatchObject({
+      details: { error: "ambiguous_tool" },
+    });
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -657,30 +900,39 @@ describe("proxy auto auth", () => {
     mocks.listToolsImpl.mockImplementation(async () => {
       await pause();
       return {
-        tools: [{
-          name: "search",
-          description: "Search",
-          inputSchema: { type: "object", properties: {} },
-        }],
+        tools: [
+          {
+            name: "search",
+            description: "Search",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
       };
     });
     mocks.listResourcesImpl.mockImplementation(async () => {
       await pause();
       return { resources: [] };
     });
-    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
-      const connection = await state.manager.connect(serverName, state.config.mcpServers[serverName]);
-      if (connection.status !== "connected") {
-        return false;
-      }
-      state.toolMetadata.set(serverName, [{
-        name: "mcp__demo_search",
-        originalName: "search",
-        description: "Search",
-        inputSchema: { type: "object", properties: {} },
-      }]);
-      return true;
-    });
+    mocks.lazyConnect.mockImplementation(
+      async (state: any, serverName: string) => {
+        const connection = await state.manager.connect(
+          serverName,
+          state.config.mcpServers[serverName],
+        );
+        if (connection.status !== "connected") {
+          return false;
+        }
+        state.toolMetadata.set(serverName, [
+          {
+            name: "mcp__demo_search",
+            originalName: "search",
+            description: "Search",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ]);
+        return true;
+      },
+    );
 
     const manager = new McpServerManager();
     manager.setDefaultRequestTimeoutMs(2500);
@@ -688,7 +940,11 @@ describe("proxy auto auth", () => {
       config: {
         settings: { toolPrefix: "mcp" },
         mcpServers: {
-          demo: { command: "node", args: ["server.js"], requestTimeoutMs: 5000 },
+          demo: {
+            command: "node",
+            args: ["server.js"],
+            requestTimeoutMs: 5000,
+          },
         },
       },
       manager,
@@ -705,13 +961,25 @@ describe("proxy auto auth", () => {
     expect(mocks.clients).toHaveLength(1);
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledTimes(1);
-    expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
+    expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], {
+      timeout: 5000,
+    });
     expect(client.listTools).toHaveBeenCalledTimes(1);
     expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000 });
     expect(client.listResources).toHaveBeenCalledTimes(1);
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000 });
-    expect(client.callTool).toHaveBeenNthCalledWith(1, { name: "search", arguments: { q: "one" }, _meta: undefined }, { timeout: 5000 });
-    expect(client.callTool).toHaveBeenNthCalledWith(2, { name: "search", arguments: { q: "two" }, _meta: undefined }, { timeout: 5000 });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, {
+      timeout: 5000,
+    });
+    expect(client.callTool).toHaveBeenNthCalledWith(
+      1,
+      { name: "search", arguments: { q: "one" }, _meta: undefined },
+      { timeout: 5000 },
+    );
+    expect(client.callTool).toHaveBeenNthCalledWith(
+      2,
+      { name: "search", arguments: { q: "two" }, _meta: undefined },
+      { timeout: 5000 },
+    );
     expect(first.content[0].text).toContain("ok");
     expect(second.content[0].text).toContain("ok");
   });

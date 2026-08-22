@@ -17,7 +17,10 @@ import {
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
-import { probeMcpEndpoint } from "./mcp-probe.ts";
+import {
+  MODERN_PROTOCOL_VERSION,
+  probeMcpEndpoint,
+} from "./mcp-probe.ts";
 import {
   isServerDisabled,
   type McpTool,
@@ -99,7 +102,7 @@ function shouldFallbackToSse(
   error: unknown,
   definition: ServerDefinition,
 ): boolean {
-  if (definition.protocolVersion === "2026-07-28") return false;
+  if (definition.protocolVersion === MODERN_PROTOCOL_VERSION) return false;
   return (
     error instanceof SdkHttpError && [404, 405, 406, 415].includes(error.status)
   );
@@ -114,8 +117,8 @@ function resolveVersionNegotiation(
       return undefined;
     case "auto":
       return { mode: "auto" };
-    case "2026-07-28":
-      return { mode: { pin: "2026-07-28" } };
+    case MODERN_PROTOCOL_VERSION:
+      return { mode: { pin: MODERN_PROTOCOL_VERSION } };
     default:
       throw new Error(
         `Invalid MCP protocolVersion: ${String(definition.protocolVersion)}`,
@@ -139,6 +142,31 @@ function boundedStderrChunk(chunk: Buffer | string): Buffer {
   return bytes.byteLength > MAX_CAPTURED_STDERR_BYTES
     ? Buffer.from(bytes.subarray(bytes.byteLength - MAX_CAPTURED_STDERR_BYTES))
     : bytes;
+}
+
+/** Shared SDK-path/raw-request mapping for resources/templates/list pages. */
+function mapSdkResourceTemplates(
+  templates:
+    | Array<{
+      uriTemplate: string;
+      name: string;
+      description?: string | undefined;
+      mimeType?: string | undefined;
+      _meta?: Record<string, unknown> | undefined;
+      [key: string]: unknown;
+    }>
+    | undefined,
+): McpResourceTemplate[] {
+  return (templates ?? []).map((t) => {
+    const template: McpResourceTemplate = {
+      uriTemplate: t.uriTemplate,
+      name: t.name,
+      description: t.description ?? "",
+      mimeType: t.mimeType ?? "",
+    };
+    if (t._meta !== undefined) template._meta = t._meta;
+    return template;
+  });
 }
 
 function appendStderrTail(tail: Buffer, chunk: Buffer | string): Buffer {
@@ -219,7 +247,7 @@ export class McpServerManager {
   private traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
   private stopped = false;
-  /** Progress listeners for per-request progressToken correlation. */
+  /** Progress listeners for per-request progressToken correlation. Scoped by "${serverName}:${token}". */
   private progressListeners = new Map<
     string,
     (notification: McpProgressNotification) => void
@@ -715,7 +743,10 @@ export class McpServerManager {
         );
       }
       this.attachAdapterNotificationHandlers(name, client);
-      this.attachProgressNotificationHandler(name, client);
+      // NOTE: attachProgressNotificationHandler is intentionally NOT called for
+      // progress notifications because it conflicts with the SDK's internal
+      // progress handling (which uses options.onprogress per-request).
+      // this.attachProgressNotificationHandler(name, client);
 
       const instructions = client.getInstructions?.();
       const connection: ServerConnection = {
@@ -749,9 +780,20 @@ export class McpServerManager {
           this.fetchAllTools(client, requestOptions),
           this.fetchAllResources(client, requestOptions),
           this.fetchAllPrompts(client, requestOptions),
-          // Try to fetch resource templates; if server doesn't support it, return empty array
+          // Try to fetch resource templates; if unsupported or the listing
+          // fails, continue without them rather than failing the connection.
           this.fetchAllResourceTemplates(client, requestOptions).catch(
-            () => [],
+            (error) => {
+              if (requestOptions?.signal?.aborted)
+                throwIfAborted(requestOptions.signal);
+              if (isUnauthorizedHttpError(error)) throw error;
+              const message =
+                error instanceof Error ? error.message : String(error);
+              logger.debug(
+                `MCP: resources/templates/list failed for ${name}: ${message}`,
+              );
+              return [] as McpResourceTemplate[];
+            },
           ),
         ]);
       connection.tools = tools;
@@ -891,7 +933,7 @@ export class McpServerManager {
   ): Record<string, unknown> {
     const caps: Record<string, unknown> = {};
     // Sampling OMITTED when protocolVersion === "2026-07-28" (P0 Fix)
-    if (this.samplingConfig && protocolVersion !== "2026-07-28") {
+    if (this.samplingConfig && protocolVersion !== MODERN_PROTOCOL_VERSION) {
       caps.sampling = {};
     }
     if (this.elicitationConfig) {
@@ -909,8 +951,8 @@ export class McpServerManager {
   ): Client {
     // Resolve protocol version for capability negotiation (P0 Fix + T06)
     let protocolVersion: string | undefined;
-    if (definition.protocolVersion === "2026-07-28") {
-      protocolVersion = "2026-07-28";
+    if (definition.protocolVersion === MODERN_PROTOCOL_VERSION) {
+      protocolVersion = MODERN_PROTOCOL_VERSION;
     } else if (definition.protocolVersion === "legacy") {
       protocolVersion = "legacy";
     } else if (definition.protocolVersion === "auto") {
@@ -1426,16 +1468,7 @@ export class McpServerManager {
           cursor ? { cursor } : undefined,
           requestOptions,
         );
-        templates = (result.resourceTemplates ?? []).map((t) => {
-          const template: McpResourceTemplate = {
-            uriTemplate: t.uriTemplate,
-            name: t.name,
-            description: t.description ?? "",
-            mimeType: t.mimeType ?? "",
-          };
-          if (t._meta !== undefined) template._meta = t._meta;
-          return template;
-        });
+        templates = mapSdkResourceTemplates(result.resourceTemplates);
         nextCursor = result.nextCursor;
       } else {
         // Fallback to raw request
@@ -1455,16 +1488,7 @@ export class McpServerManager {
           }>;
           nextCursor?: string;
         };
-        templates = (result.resourceTemplates ?? []).map((t) => {
-          const template: McpResourceTemplate = {
-            uriTemplate: t.uriTemplate,
-            name: t.name,
-            description: t.description ?? "",
-            mimeType: t.mimeType ?? "",
-          };
-          if (t._meta !== undefined) template._meta = t._meta;
-          return template;
-        });
+        templates = mapSdkResourceTemplates(result.resourceTemplates);
         nextCursor = result.nextCursor;
       }
 
@@ -1620,18 +1644,21 @@ export class McpServerManager {
   /**
    * Register the global progress notification handler for a client.
    * Called during connection establishment.
+   * NOTE: This handler conflicts with the SDK's internal progress handling
+   * (which uses options.onprogress per-request). Kept for potential
+   * server-initiated progress not tied to a request, but scoped to avoid
+   * cross-server token collisions.
    */
   private attachProgressNotificationHandler(
-    _serverName: string,
+    serverName: string,
     client: Client,
   ): void {
     client.setNotificationHandler(
       "notifications/progress",
       (notification: { method: string; params: unknown }) => {
         const params = notification.params as McpProgressNotification;
-        const listener = this.progressListeners.get(
-          String(params.progressToken),
-        );
+        const scopedKey = `${serverName}:${String(params.progressToken)}`;
+        const listener = this.progressListeners.get(scopedKey);
         if (listener) {
           listener(params);
         }
@@ -1642,21 +1669,41 @@ export class McpServerManager {
 
   /**
    * Register a one-shot progress listener for a specific progressToken.
-   * String/number token normalized to string key.
+   * Scoped by serverName to avoid cross-server token collisions.
+   * Key format: "${serverName}:${token}".
    */
   registerProgressListener(
+    serverName: string,
     progressToken: string | number,
     handler: (notification: McpProgressNotification) => void,
   ): void {
-    this.progressListeners.set(String(progressToken), handler);
+    const scopedKey = `${serverName}:${String(progressToken)}`;
+    this.progressListeners.set(scopedKey, handler);
   }
 
   /**
    * Unregister a progress listener by progressToken.
-   * String/number token normalized to string key.
+   * Scoped by serverName to avoid cross-server token collisions.
+   * Key format: "${serverName}:${token}".
    */
-  unregisterProgressListener(progressToken: string | number): void {
-    this.progressListeners.delete(String(progressToken));
+  unregisterProgressListener(
+    serverName: string,
+    progressToken: string | number,
+  ): void {
+    const scopedKey = `${serverName}:${String(progressToken)}`;
+    this.progressListeners.delete(scopedKey);
+  }
+
+  /**
+   * Get a progress listener by scoped key (serverName + token).
+   * Used by onprogress callbacks to bridge SDK progress to registered listeners.
+   */
+  getProgressListener(
+    serverName: string,
+    progressToken: string | number,
+  ): ((notification: McpProgressNotification) => void) | undefined {
+    const scopedKey = `${serverName}:${String(progressToken)}`;
+    return this.progressListeners.get(scopedKey);
   }
 
   async close(name: string): Promise<void> {
@@ -1747,6 +1794,7 @@ export class McpServerManager {
     this.uiStreamListeners.clear();
     this.acceptedUrlElicitations.clear();
     this.pendingMetadataPublications.clear();
+    this.progressListeners.clear();
     this.samplingConfig = undefined;
     this.elicitationConfig = undefined;
     await this.traceWriter?.flush();

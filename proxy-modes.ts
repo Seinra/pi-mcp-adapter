@@ -13,11 +13,13 @@ import type {
   McpContent,
   McpProgressNotification,
   McpCallToolResultMeta,
+  CallToolResultWithCacheable,
 } from "./types.ts";
 import {
   getServerPrefix,
   isServerDisabled,
   parseUiPromptHandoff,
+  resultMetaDetails,
 } from "./types.ts";
 import {
   lazyConnect,
@@ -1874,14 +1876,19 @@ export async function executeCall(
       protocolVersion,
     ) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
 
-  // T16: Register one-shot progress listener when progressToken provided
+  // T16: Register one-shot progress listener when progressToken provided.
+  // The SDK injects _meta.progressToken itself when options.onprogress is set;
+  // our onprogress bridges SDK-delivered progress to the server-scoped
+  // listener registry instead of hand-rolling the token into _meta.
   if (progressToken !== undefined) {
     if (!requestOptions) requestOptions = {};
-    (requestOptions as Record<string, unknown>)._meta = {
-      ...((requestOptions as Record<string, unknown>)._meta as
-        | Record<string, unknown>
-        | undefined),
-      progressToken,
+    (requestOptions as Record<string, unknown>).onprogress = (
+      progress: Omit<McpProgressNotification, "progressToken">,
+    ) => {
+      state.manager.getProgressListener(
+        serverName,
+        progressToken,
+      )?.({ ...progress, progressToken });
     };
     const progressHandler = (notification: McpProgressNotification) => {
       const message = notification.message
@@ -1889,9 +1896,13 @@ export async function executeCall(
         : `Progress: ${notification.progress}${notification.total === undefined ? "" : `/${notification.total}`}`;
       state.ui?.notify(message, "info");
     };
-    state.manager.registerProgressListener(progressToken, progressHandler);
+    state.manager.registerProgressListener(
+      serverName,
+      progressToken,
+      progressHandler,
+    );
     progressCleanup = () =>
-      state.manager.unregisterProgressListener(progressToken);
+      state.manager.unregisterProgressListener(serverName, progressToken);
   }
 
   const outputGuardOptions = resolveMcpOutputGuardOptions(
@@ -1963,16 +1974,13 @@ export async function executeCall(
       const resourceMeta = result._meta as
         | { resultType?: string; serverInfo?: Record<string, unknown> }
         | undefined;
-      const resultType = resourceMeta?.resultType;
-      const serverInfo = resourceMeta?.serverInfo;
       return {
         content: guarded.content,
         details: {
           mode: "call",
           ...callIdentity,
           ...guardedMcpDetails(guarded),
-          ...(resultType ? { resultType } : {}),
-          ...(serverInfo ? { serverInfo } : {}),
+          ...resultMetaDetails(resourceMeta as McpCallToolResultMeta),
         },
       };
     }
@@ -2014,14 +2022,11 @@ export async function executeCall(
     );
 
     const meta = result._meta as Record<string, unknown> | undefined;
+    const typedResult = result as CallToolResultWithCacheable;
     const resultMeta: McpCallToolResultMeta = {
       protocolVersion: meta?.protocolVersion as string | undefined,
-      structuredContent: (result as any).structuredContent as
-        | Record<string, unknown>
-        | undefined,
-      outputSchema: (result as any).outputSchema as
-        | Record<string, unknown>
-        | undefined,
+      structuredContent: typedResult.structuredContent,
+      outputSchema: typedResult.outputSchema,
       progressToken: meta?.progressToken as string | number | undefined,
     };
     if (result.resultType && typeof result.resultType === "string")
@@ -2029,13 +2034,11 @@ export async function executeCall(
     if (meta?.serverInfo)
       resultMeta.serverInfo = meta.serverInfo as Record<string, unknown>;
 
-    const resultType = resultMeta.resultType;
-    const serverInfo = resultMeta.serverInfo;
-    const structuredContent = resultMeta.structuredContent;
-    const outputSchema = resultMeta.outputSchema;
-    const progressTokenResult = resultMeta.progressToken;
-
     if (toolMeta.uiResourceUri) {
+      // SAFETY: `result` is the wire-shaped CallToolResult returned verbatim
+      // by client.callTool(); sendToolResult declares a structurally identical
+      // CallToolResult re-exported through the UI bridge module, so this cast
+      // only reconciles duplicate declarations — no runtime reshaping occurs.
       uiSession?.sendToolResult(
         result as unknown as import("@modelcontextprotocol/client").CallToolResult,
       );
@@ -2064,13 +2067,7 @@ export async function executeCall(
             error: "tool_error",
             ...callIdentity,
             ...guardedMcpDetails(guarded),
-            ...(resultType ? { resultType } : {}),
-            ...(serverInfo ? { serverInfo } : {}),
-            ...(structuredContent ? { structuredContent } : {}),
-            ...(outputSchema ? { outputSchema } : {}),
-            ...(progressTokenResult
-              ? { progressToken: progressTokenResult }
-              : {}),
+            ...resultMetaDetails(resultMeta),
           },
         };
       }
@@ -2098,18 +2095,7 @@ export async function executeCall(
           uiOpen: uiSummary.uiOpen,
           uiViewer: uiSummary.uiViewer,
           uiUrl: uiSummary.uiUrl,
-          ...(resultType ? { resultType } : {}),
-          ...(serverInfo ? { serverInfo } : {}),
-          ...(structuredContent ? { structuredContent } : {}),
-          ...(outputSchema ? { outputSchema } : {}),
-          ...(progressTokenResult
-            ? { progressToken: progressTokenResult }
-            : {}),
-          ...(structuredContent ? { structuredContent } : {}),
-          ...(outputSchema ? { outputSchema } : {}),
-          ...(progressTokenResult
-            ? { progressToken: progressTokenResult }
-            : {}),
+          ...resultMetaDetails(resultMeta),
         },
       };
     }
@@ -2138,13 +2124,7 @@ export async function executeCall(
           error: "tool_error",
           ...callIdentity,
           ...guardedMcpDetails(guarded),
-          ...(resultType ? { resultType } : {}),
-          ...(serverInfo ? { serverInfo } : {}),
-          ...(structuredContent ? { structuredContent } : {}),
-          ...(outputSchema ? { outputSchema } : {}),
-          ...(progressTokenResult
-            ? { progressToken: progressTokenResult }
-            : {}),
+          ...resultMetaDetails(resultMeta),
         },
       };
     }
@@ -2167,11 +2147,7 @@ export async function executeCall(
         mode: "call",
         ...guardedMcpDetails(guarded),
         ...callIdentity,
-        ...(resultType ? { resultType } : {}),
-        ...(serverInfo ? { serverInfo } : {}),
-        ...(structuredContent ? { structuredContent } : {}),
-        ...(outputSchema ? { outputSchema } : {}),
-        ...(progressTokenResult ? { progressToken: progressTokenResult } : {}),
+        ...resultMetaDetails(resultMeta),
       },
     };
   } catch (error) {

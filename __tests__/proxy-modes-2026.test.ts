@@ -197,10 +197,12 @@ describe("proxy-modes 2026-07-28 features", () => {
       );
 
       expect(manager.registerProgressListener).toHaveBeenCalledWith(
+        "demo",
         "token123",
         expect.any(Function),
       );
       expect(manager.unregisterProgressListener).toHaveBeenCalledWith(
+        "demo",
         "token123",
       );
     });
@@ -228,11 +230,12 @@ describe("proxy-modes 2026-07-28 features", () => {
       ).resolves.toBeDefined();
 
       expect(manager.unregisterProgressListener).toHaveBeenCalledWith(
+        "demo",
         "token123",
       );
     });
 
-    it("puts the progress token into request options _meta", async () => {
+    it("passes onprogress callback to callTool options (not requestOptions._meta)", async () => {
       const { executeCall } = await import("../proxy-modes.ts");
 
       const manager = createManager();
@@ -250,10 +253,14 @@ describe("proxy-modes 2026-07-28 features", () => {
         "token123",
       );
 
-      const [, requestOptions] = (
-        manager.getConnection().client.callTool as any
-      ).mock.calls[0];
-      expect(requestOptions._meta).toMatchObject({ progressToken: "token123" });
+      const callToolMock = manager.getConnection().client.callTool as any;
+      const [, requestOptions] = callToolMock.mock.calls[0];
+      // SDK only injects progressToken when options.onprogress is set
+      // requestOptions may not have _meta at all, which is fine
+      if (requestOptions._meta) {
+        expect(requestOptions._meta).not.toHaveProperty("progressToken");
+      }
+      expect(typeof requestOptions.onprogress).toBe("function");
     });
 
     it("listener handler notifies through state.ui", async () => {
@@ -274,7 +281,7 @@ describe("proxy-modes 2026-07-28 features", () => {
         "token123",
       );
 
-      const handler = manager.registerProgressListener.mock.calls[0][1] as (n: {
+      const handler = manager.registerProgressListener.mock.calls[0][2] as (n: {
         progress: number;
         total?: number;
         message?: string;

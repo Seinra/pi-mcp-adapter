@@ -14,6 +14,7 @@ import type {
   McpContent,
   ToolPrefix,
   McpCallToolResultMeta,
+ CallToolResultWithCacheable,
 } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
@@ -46,6 +47,7 @@ import {
   isServerDisabled,
   isToolAllowed,
   resolveToolPrefix,
+ resultMetaDetails,
 } from "./types.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
@@ -765,8 +767,6 @@ export function createDirectToolExecutor(
         const resourceMeta = result._meta as
           | { resultType?: string; serverInfo?: Record<string, unknown> }
           | undefined;
-        const resultType = resourceMeta?.resultType;
-        const serverInfo = resourceMeta?.serverInfo;
         const guarded = await guardMcpOutput(
           content.length > 0
             ? content
@@ -779,8 +779,7 @@ export function createDirectToolExecutor(
             server: spec.serverName,
             resourceUri: spec.resourceUri,
             ...guardedMcpDetails(guarded),
-            ...(resultType ? { resultType } : {}),
-            ...(serverInfo ? { serverInfo } : {}),
+            ...resultMetaDetails(resourceMeta as McpCallToolResultMeta),
           },
         };
       }
@@ -826,25 +825,17 @@ export function createDirectToolExecutor(
       );
 
       const meta = result._meta as Record<string, unknown> | undefined;
+      const typedResult = result as CallToolResultWithCacheable;
       const resultMeta: McpCallToolResultMeta = {
         protocolVersion: meta?.protocolVersion as string | undefined,
-        structuredContent: (result as any).structuredContent as
-          | Record<string, unknown>
-          | undefined,
-        outputSchema: (result as any).outputSchema as
-          | Record<string, unknown>
-          | undefined,
+        structuredContent: typedResult.structuredContent,
+        outputSchema: typedResult.outputSchema,
         progressToken: meta?.progressToken as string | number | undefined,
       };
       if (result.resultType && typeof result.resultType === "string")
         resultMeta.resultType = result.resultType;
       if (meta?.serverInfo)
         resultMeta.serverInfo = meta.serverInfo as Record<string, unknown>;
-      const resultType = resultMeta.resultType;
-      const serverInfo = resultMeta.serverInfo;
-      const structuredContent = resultMeta.structuredContent;
-      const outputSchema = resultMeta.outputSchema;
-      const progressTokenResult = resultMeta.progressToken;
 
       if (result.isError) {
         const mcpContent = (result.content ?? []) as McpContent[];
@@ -868,13 +859,7 @@ export function createDirectToolExecutor(
             error: "tool_error",
             server: spec.serverName,
             ...guardedMcpDetails(guarded),
-            ...(resultType ? { resultType } : {}),
-            ...(serverInfo ? { serverInfo } : {}),
-            ...(structuredContent ? { structuredContent } : {}),
-            ...(outputSchema ? { outputSchema } : {}),
-            ...(progressTokenResult
-              ? { progressToken: progressTokenResult }
-              : {}),
+            ...resultMetaDetails(resultMeta),
           },
         };
       }
@@ -902,13 +887,7 @@ export function createDirectToolExecutor(
             uiViewer: uiSummary.uiViewer,
             uiUrl: uiSummary.uiUrl,
             ...guardedMcpDetails(guarded),
-            ...(resultType ? { resultType } : {}),
-            ...(serverInfo ? { serverInfo } : {}),
-            ...(structuredContent ? { structuredContent } : {}),
-            ...(outputSchema ? { outputSchema } : {}),
-            ...(progressTokenResult
-              ? { progressToken: progressTokenResult }
-              : {}),
+            ...resultMetaDetails(resultMeta),
           },
         };
       }
@@ -922,13 +901,7 @@ export function createDirectToolExecutor(
           server: spec.serverName,
           tool: spec.originalName,
           ...guardedMcpDetails(guarded),
-          ...(resultType ? { resultType } : {}),
-          ...(serverInfo ? { serverInfo } : {}),
-          ...(structuredContent ? { structuredContent } : {}),
-          ...(outputSchema ? { outputSchema } : {}),
-          ...(progressTokenResult
-            ? { progressToken: progressTokenResult }
-            : {}),
+          ...resultMetaDetails(resultMeta),
         },
       };
     } catch (error) {

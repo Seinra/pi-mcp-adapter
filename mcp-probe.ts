@@ -1,5 +1,6 @@
 const PROBE_TIMEOUT_MS = 5_000;
-const MODERN_PROTOCOL_VERSION = "2026-07-28";
+/** Pinned MCP protocol revision; shared with server-manager version negotiation. */
+export const MODERN_PROTOCOL_VERSION = "2026-07-28";
 const LEGACY_PROTOCOL_VERSION = "2025-06-18";
 const JSON_ACCEPT = "application/json, text/event-stream";
 const SSE_ACCEPT = "text/event-stream";

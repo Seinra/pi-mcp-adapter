@@ -1,5 +1,6 @@
 // types.ts - Core type definitions
 import type {
+ CallToolResult,
  ContentBlock as McpContentBlock,
  ListPromptsResult,
  ListResourcesResult,
@@ -64,6 +65,12 @@ export interface McpCompletionArgument {
 }
 
 export interface McpCompletionContext {
+ /**
+ * Deliberately open (`| string`): MCP ref kinds are spec-extensible and
+ * servers may use custom ref types (e.g. "custom/ref"); complete() forwards
+ * unrecognized types verbatim instead of rejecting them. The two literal
+ * members document the shapes the spec defines today.
+ */
  type: "ref/prompt" | "ref/resource" | string;
  name: string;
 }
@@ -674,6 +681,40 @@ export interface McpCallToolResultMeta {
  /** Optional server info from 2026-07-28 protocol */
  serverInfo?: Record<string, unknown> | undefined;
 }
+
+/**
+ * Extract conditional spread details from McpCallToolResultMeta.
+ * Returns an object with only the defined optional properties.
+ */
+export function resultMetaDetails(
+ meta: McpCallToolResultMeta | undefined,
+): Record<string, unknown> {
+ if (!meta) return {};
+ const {
+  resultType,
+  serverInfo,
+  structuredContent,
+  outputSchema,
+  progressToken,
+ } = meta;
+ return {
+  ...(resultType ? { resultType } : {}),
+  ...(serverInfo ? { serverInfo } : {}),
+  ...(structuredContent ? { structuredContent } : {}),
+  ...(outputSchema ? { outputSchema } : {}),
+  ...(progressToken ? { progressToken } : {}),
+ };
+}
+
+/**
+ * Typed view of an SDK call-tool result including the MCP 2026-07-28 fields
+ * the installed SDK types do not yet declare. Cast once at each result sink
+ * instead of scattering `as any` property lookups.
+ */
+export type CallToolResultWithCacheable = CallToolResult & {
+ structuredContent?: Record<string, unknown> | undefined;
+ outputSchema?: Record<string, unknown> | undefined;
+};
 
 export interface DirectToolSpec {
  serverName: string;

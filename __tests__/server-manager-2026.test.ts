@@ -177,14 +177,12 @@ describe("McpServerManager 2026-07-28 features", () => {
       const manager = new McpServerManager();
 
       const client = {
-        listResourceTemplates: vi
-          .fn()
-          .mockResolvedValueOnce({
-            resourceTemplates: [
-              { uriTemplate: "file:///template/{id}", name: "template1" },
-            ],
-            nextCursor: undefined,
-          }),
+        listResourceTemplates: vi.fn().mockResolvedValueOnce({
+          resourceTemplates: [
+            { uriTemplate: "file:///template/{id}", name: "template1" },
+          ],
+          nextCursor: undefined,
+        }),
         getServerCapabilities: vi.fn(() => ({
           resources: { templates: true },
         })),
@@ -212,14 +210,12 @@ describe("McpServerManager 2026-07-28 features", () => {
 
       const client = {
         listResourceTemplates: undefined,
-        request: vi
-          .fn()
-          .mockResolvedValue({
-            resourceTemplates: [
-              { uriTemplate: "file:///template/{id}", name: "template1" },
-            ],
-            nextCursor: undefined,
-          }),
+        request: vi.fn().mockResolvedValue({
+          resourceTemplates: [
+            { uriTemplate: "file:///template/{id}", name: "template1" },
+          ],
+          nextCursor: undefined,
+        }),
         getServerCapabilities: vi.fn(() => ({
           resources: { templates: true },
         })),
@@ -395,11 +391,9 @@ describe("McpServerManager 2026-07-28 features", () => {
       const manager = new McpServerManager();
 
       const client = {
-        complete: vi
-          .fn()
-          .mockResolvedValue({
-            completion: { values: ["val1", "val2"], total: 2, hasMore: false },
-          }),
+        complete: vi.fn().mockResolvedValue({
+          completion: { values: ["val1", "val2"], total: 2, hasMore: false },
+        }),
         getServerCapabilities: vi.fn(() => ({ completions: {} })),
         close: vi.fn(async () => undefined),
         setRequestHandler: vi.fn(),
@@ -435,11 +429,9 @@ describe("McpServerManager 2026-07-28 features", () => {
 
       const client = {
         complete: undefined,
-        request: vi
-          .fn()
-          .mockResolvedValue({
-            completion: { values: ["val1"], total: 1, hasMore: false },
-          }),
+        request: vi.fn().mockResolvedValue({
+          completion: { values: ["val1"], total: 1, hasMore: false },
+        }),
         getServerCapabilities: vi.fn(() => ({ completions: {} })),
         close: vi.fn(async () => undefined),
         setRequestHandler: vi.fn(),
@@ -515,11 +507,9 @@ describe("McpServerManager 2026-07-28 features", () => {
       const manager = new McpServerManager();
 
       const client = {
-        complete: vi
-          .fn()
-          .mockResolvedValue({
-            completion: { values: ["val1"], total: 1, hasMore: false },
-          }),
+        complete: vi.fn().mockResolvedValue({
+          completion: { values: ["val1"], total: 1, hasMore: false },
+        }),
         getServerCapabilities: vi.fn(() => ({ completions: {} })),
         close: vi.fn(async () => undefined),
         setRequestHandler: vi.fn(),
@@ -548,42 +538,50 @@ describe("McpServerManager 2026-07-28 features", () => {
   });
 
   describe("progress listeners", () => {
-    it("registers and unregisters listener by token", async () => {
+    const TEST_SERVER = "test-server";
+
+    it("registers and unregisters listener by token (scoped by serverName)", async () => {
       const { McpServerManager } = await import("../server-manager.ts");
       const manager = new McpServerManager();
 
       const handler = vi.fn();
-      manager.registerProgressListener("token123", handler);
-      expect((manager as any).progressListeners.has("token123")).toBe(true);
+      manager.registerProgressListener(TEST_SERVER, "token123", handler);
+      const scopedKey = `${TEST_SERVER}:token123`;
+      expect((manager as any).progressListeners.has(scopedKey)).toBe(true);
 
-      manager.unregisterProgressListener("token123");
-      expect((manager as any).progressListeners.has("token123")).toBe(false);
+      manager.unregisterProgressListener(TEST_SERVER, "token123");
+      expect((manager as any).progressListeners.has(scopedKey)).toBe(false);
     });
 
-    it("normalizes string and number tokens to different string keys", async () => {
+    it("normalizes string and number tokens to different string keys (scoped by serverName)", async () => {
       const { McpServerManager } = await import("../server-manager.ts");
       const manager = new McpServerManager();
 
       const handler1 = vi.fn();
       const handler2 = vi.fn();
-      manager.registerProgressListener("token123", handler1);
-      manager.registerProgressListener(123, handler2);
+      manager.registerProgressListener(TEST_SERVER, "token123", handler1);
+      manager.registerProgressListener(TEST_SERVER, 123, handler2);
 
-      // "token123" and "123" are different keys
+      // "token123" and "123" are different keys even with same serverName
       expect((manager as any).progressListeners.size).toBe(2);
-      expect((manager as any).progressListeners.get("token123")).toBe(handler1);
-      expect((manager as any).progressListeners.get("123")).toBe(handler2);
+      expect(
+        (manager as any).progressListeners.get(`${TEST_SERVER}:token123`),
+      ).toBe(handler1);
+      expect((manager as any).progressListeners.get(`${TEST_SERVER}:123`)).toBe(
+        handler2,
+      );
     });
 
-    it("invokes handler when notification matches token", async () => {
+    it("invokes handler when notification matches token (scoped by serverName)", async () => {
       const { McpServerManager } = await import("../server-manager.ts");
       const manager = new McpServerManager();
 
       const handler = vi.fn();
-      manager.registerProgressListener("token123", handler);
+      manager.registerProgressListener(TEST_SERVER, "token123", handler);
 
       const params = { progressToken: "token123", progress: 50, total: 100 };
-      const listener = (manager as any).progressListeners.get("token123");
+      const scopedKey = `${TEST_SERVER}:token123`;
+      const listener = (manager as any).progressListeners.get(scopedKey);
       if (listener) {
         listener(params);
       }
@@ -595,20 +593,22 @@ describe("McpServerManager 2026-07-28 features", () => {
       });
     });
 
-    it("drops notification with unknown token silently", async () => {
+    it("drops notification with unknown token silently (scoped by serverName)", async () => {
       const { McpServerManager } = await import("../server-manager.ts");
       const manager = new McpServerManager();
 
       const handler = vi.fn();
-      manager.registerProgressListener("known-token", handler);
+      manager.registerProgressListener(TEST_SERVER, "known-token", handler);
 
       // Simulate unknown token
-      const listener = (manager as any).progressListeners.get("unknown-token");
+      const listener = (manager as any).progressListeners.get(
+        `${TEST_SERVER}:unknown-token`,
+      );
       expect(listener).toBeUndefined();
 
       // Directly test that no handler is invoked for unknown token
       const unknownListener = (manager as any).progressListeners.get(
-        "unknown-token",
+        `${TEST_SERVER}:unknown-token`,
       );
       if (unknownListener) {
         unknownListener({
@@ -623,7 +623,9 @@ describe("McpServerManager 2026-07-28 features", () => {
   });
 
   describe("progress listener with UI notify", () => {
-    it("calls ui.notify with formatted progress message when listener registered", async () => {
+    const TEST_SERVER = "test-server";
+
+    it("calls ui.notify with formatted progress message when listener registered (scoped by serverName)", async () => {
       const { McpServerManager } = await import("../server-manager.ts");
       const manager = new McpServerManager();
 
@@ -633,15 +635,20 @@ describe("McpServerManager 2026-07-28 features", () => {
       manager.setElicitationConfig({ allowUrl: false, ui: ui as any });
 
       // Register a listener that mimics executeCall pattern
-      manager.registerProgressListener("token123", (notification) => {
-        ui.notify(
-          `Progress: ${notification.progress}/${notification.total} - ${notification.message}`,
-          "progress",
-        );
-      });
+      manager.registerProgressListener(
+        TEST_SERVER,
+        "token123",
+        (notification) => {
+          ui.notify(
+            `Progress: ${notification.progress}/${notification.total} - ${notification.message}`,
+            "progress",
+          );
+        },
+      );
 
       // Directly invoke the listener
-      const listener = (manager as any).progressListeners.get("token123");
+      const scopedKey = `${TEST_SERVER}:token123`;
+      const listener = (manager as any).progressListeners.get(scopedKey);
       if (listener) {
         listener({
           progressToken: "token123",
@@ -665,6 +672,64 @@ describe("McpServerManager 2026-07-28 features", () => {
         "Progress: 75/100 - Almost done",
         "progress",
       );
+    });
+
+    it("simulates notification dispatch through attachProgressNotificationHandler with scoped keys", async () => {
+      const { McpServerManager } = await import("../server-manager.ts");
+      const manager = new McpServerManager();
+
+      const ui = { notify: vi.fn() };
+      const handler = vi.fn((notification) => {
+        ui.notify(
+          `Progress: ${notification.progress}/${notification.total}`,
+          "info",
+        );
+      });
+
+      // Register listener with scoped key
+      manager.registerProgressListener(TEST_SERVER, "token123", handler);
+
+      // Simulate the attachProgressNotificationHandler being called with a mock client
+      // We invoke the private method directly to test the notification handler logic
+      const mockClient = {
+        setNotificationHandler: vi.fn((method, handler) => {
+          if (method === "notifications/progress") {
+            // Store the handler for later invocation
+            mockClient._progressHandler = handler;
+          }
+        }),
+      };
+      // @ts-expect-error - testing private method
+      manager.attachProgressNotificationHandler(TEST_SERVER, mockClient);
+
+      // Simulate a progress notification arriving
+      const notification = {
+        method: "notifications/progress",
+        params: {
+          progressToken: "token123",
+          progress: 50,
+          total: 100,
+          message: "Working",
+        },
+      };
+      await mockClient._progressHandler(notification);
+
+      // Verify the handler was invoked with the correct params
+      expect(handler).toHaveBeenCalledWith({
+        progressToken: "token123",
+        progress: 50,
+        total: 100,
+        message: "Working",
+      });
+      expect(ui.notify).toHaveBeenCalledWith("Progress: 50/100", "info");
+
+      // Verify unknown token is dropped silently
+      const unknownNotification = {
+        method: "notifications/progress",
+        params: { progressToken: "unknown-token", progress: 50, total: 100 },
+      };
+      await mockClient._progressHandler(unknownNotification);
+      expect(handler).toHaveBeenCalledTimes(1); // Still only called once
     });
   });
 });

@@ -27,7 +27,17 @@ import type {
   ToolMetadata,
   PromptMetadata,
 } from "./types.ts";
-import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
+import {
+  createToolSelectorCandidateIndex,
+  formatPromptCommandName,
+  formatToolName,
+  getToolNameCandidates,
+  isServerDisabled,
+  isToolAllowed,
+  resolveToolPrefix,
+  type ToolPrefix,
+  type ToolSelectorCandidateIndex,
+} from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolUiStreamMode,
@@ -144,7 +154,29 @@ export function isServerCacheValid(
   }
   if (!entry || entry.configHash !== configHash) return false;
   if (!entry.cachedAt || typeof entry.cachedAt !== "number") return false;
-  if (maxAgeMs > 0 && Date.now() - entry.cachedAt > maxAgeMs) return false;
+
+  // Honor per-tool CacheableResult TTLs: the entry expires at the tightest
+  // declared ttlMs, capped by (never extending) the caller's max age.
+  const declaredTtls = (entry.tools ?? [])
+    .map((tool) => tool.ttlMs)
+    .filter(
+      (ttl): ttl is number =>
+        typeof ttl === "number" && Number.isFinite(ttl) && ttl >= 0,
+    );
+  const ageMs = Date.now() - entry.cachedAt;
+  if (declaredTtls.length > 0) {
+    // reduce instead of Math.min(...spread): huge tool arrays would exceed
+    // the engine's argument-count limit.
+    const tightestTtl = declaredTtls.reduce(
+      (min, ttl) => (ttl < min ? ttl : min),
+      Number.POSITIVE_INFINITY,
+    );
+    const effectiveMaxAge =
+      maxAgeMs > 0 ? Math.min(maxAgeMs, tightestTtl) : tightestTtl;
+    return ageMs < effectiveMaxAge;
+  }
+
+  if (maxAgeMs > 0 && ageMs > maxAgeMs) return false;
   return true;
 }
 
@@ -221,12 +253,19 @@ export function reconstructToolMetadata(
   const seenNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
   const hasToolFilters =
-    (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
-    (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
+    (Array.isArray(definition.includeTools) &&
+      definition.includeTools.length > 0) ||
+    (Array.isArray(definition.excludeTools) &&
+      definition.excludeTools.length > 0);
   const selectorCandidateIndex = hasToolFilters
-    ? sharedSelectorCandidateIndex ?? (configuredServers && cache
-      ? createCachedToolSelectorCandidateIndex(configuredServers, cache, prefix)
-      : undefined)
+    ? (sharedSelectorCandidateIndex ??
+      (configuredServers && cache
+        ? createCachedToolSelectorCandidateIndex(
+            configuredServers,
+            cache,
+            prefix,
+          )
+        : undefined))
     : undefined;
 
   for (const tool of entry.tools ?? []) {
@@ -315,16 +354,33 @@ export function createCachedToolSelectorCandidateIndex(
   const candidates = new Set<string>();
   for (const [serverName, definition] of Object.entries(configuredServers)) {
     const entry = cache.servers[serverName];
-    if (!entry || !isServerCacheValid(entry, definition) || isServerDisabled(definition)) continue;
+    if (
+      !entry ||
+      !isServerCacheValid(entry, definition) ||
+      isServerDisabled(definition)
+    )
+      continue;
     const effectivePrefix = resolveToolPrefix(definition, prefix);
     for (const tool of entry.tools ?? []) {
       if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
-      for (const candidate of getToolNameCandidates(tool.name, serverName, effectivePrefix, false)) candidates.add(candidate);
+      for (const candidate of getToolNameCandidates(
+        tool.name,
+        serverName,
+        effectivePrefix,
+        false,
+      ))
+        candidates.add(candidate);
     }
     if (definition.exposeResources !== false) {
       for (const resource of entry.resources ?? []) {
         const baseName = `read_${resourceNameToToolName(resource.name)}`;
-        for (const candidate of getToolNameCandidates(baseName, serverName, effectivePrefix, false)) candidates.add(candidate);
+        for (const candidate of getToolNameCandidates(
+          baseName,
+          serverName,
+          effectivePrefix,
+          false,
+        ))
+          candidates.add(candidate);
       }
     }
   }
@@ -342,6 +398,8 @@ export function serializeTools(tools: McpTool[]): CachedTool[] {
         name: t.name,
         ...(t.description !== undefined ? { description: t.description } : {}),
         ...(t.inputSchema !== undefined ? { inputSchema: t.inputSchema } : {}),
+        ...(t.ttlMs !== undefined ? { ttlMs: t.ttlMs } : {}),
+        ...(t.cacheScope !== undefined ? { cacheScope: t.cacheScope } : {}),
         ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
         ...(uiVisibility !== undefined ? { uiVisibility } : {}),
         ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),

@@ -106,6 +106,10 @@ export interface McpTool {
  description?: SdkTool["description"];
  inputSchema?: SdkTool["inputSchema"]; // JSON Schema
  _meta?: SdkTool["_meta"];
+ /** CacheableResult hint from MCP 2026-07-28 list responses */
+ ttlMs?: number;
+ /** Shared-intermediary caching scope ("public" | "private") */
+ cacheScope?: "public" | "private";
 }
 
 export interface McpResource {
@@ -423,76 +427,76 @@ export interface HttpRequestHeadersCommand {
 
 // Server configuration
 export interface ServerEntry {
-  command?: string;
-  args?: string[];
-  /** Explicit rmcp-mux Unix-domain socket path. Mutually exclusive with command and url. */
-  socket?: string;
-  env?: Record<string, string>;
-  cwd?: string;
-  // HTTP fields
-  url?: string;
-  headers?: Record<string, string>;
-  /** Add or replace HTTP headers by running a trusted command for each request. */
-  requestHeadersCommand?: HttpRequestHeadersCommand;
-  /** 
-   * Authentication type:
-   * - 'oauth' - Use OAuth 2.1 (auto-discovers endpoints, supports dynamic client registration)
-   * - 'bearer' - Use static Bearer token
-   * - false - Disable authentication
-   * If not specified and url is present, OAuth will be auto-detected unless custom headers are configured
-   */
-  auth?: "oauth" | "bearer" | false;
-  bearerToken?: string;
-  bearerTokenEnv?: string;
-  /** Read a static bearer token from the adapter-owned OS credential store. */
-  bearerTokenStore?: true;
-  /** 
-   * OAuth configuration (optional).
-   * If not provided, the SDK will attempt dynamic client registration.
-   * Set to false to explicitly disable OAuth for this server.
-   */
-  oauth?: OAuthConfig | false;
-  lifecycle?: "keep-alive" | "lazy" | "lazy-keep-alive" | "eager";
-  idleTimeout?: number; // minutes, overrides global setting
-  requestTimeoutMs?: number; // milliseconds, overrides global request timeout when > 0
-  // Resource handling
-  exposeResources?: boolean;
-  // Direct tool registration
-  directTools?: boolean | string[];
-  // Override settings.toolPrefix for this server.
-  toolPrefix?: ToolPrefix;
-  // Include/exclude specific MCP tools/resources by original or prefixed name
-  includeTools?: string[];
-  excludeTools?: string[];
-  /**
-   * Extra search keywords per tool, keyed by original name, prefixed name, or
-   * glob (same matching rules as includeTools/excludeTools). Keywords boost
-   * mcp({ search }) ranking only — they never appear in tool schemas,
-   * describe output, or the metadata cache.
-   */
-  searchKeywords?: Record<string, string[]>;
-  // Require interactive approval before calling matching MCP tools/resources.
-  approveTools?: boolean | string[];
-  // Debug
-  debug?: boolean;  // Show server stderr (default: false)
-  /** Enable metadata-only JSONL protocol tracing for this server. */
-  trace?: boolean;
-  /** Force a specific HTTP MCP transport. Used by Agent Plugins, whose `type` declares the transport and forbids client fallback. */
-  httpTransport?: "streamable-http" | "sse";
-  /** Client-managed persistent data directory for Agent Plugin stdio servers. */
-  pluginDataDir?: string;
-  /** Treat env values as already resolved literals. Used for Agent Plugin env rules. */
-  literalEnv?: boolean;
-  /**
-   * MCP protocol era negotiation for this server. Defaults to `"legacy"`
-   * (byte-equivalent to pre-2026 behavior — no `versionNegotiation` is sent).
-   * `"auto"` offers the SDK's default 2026-07-28+ modern versions with
-   * legacy fallback; `"2026-07-28"` pins the connection to that revision
-   * with no fallback. `auto` and `2026-07-28` must be set explicitly.
-   */
-  protocolVersion?: "legacy" | "auto" | "2026-07-28";
-  // Keep configuration visible without allowing connections or execution.
-  disabled?: boolean;
+ command?: string;
+ args?: string[];
+ /** Explicit rmcp-mux Unix-domain socket path. Mutually exclusive with command and url. */
+ socket?: string;
+ env?: Record<string, string>;
+ cwd?: string;
+ // HTTP fields
+ url?: string;
+ headers?: Record<string, string>;
+ /** Add or replace HTTP headers by running a trusted command for each request. */
+ requestHeadersCommand?: HttpRequestHeadersCommand;
+ /**
+  * Authentication type:
+  * - 'oauth' - Use OAuth 2.1 (auto-discovers endpoints, supports dynamic client registration)
+  * - 'bearer' - Use static Bearer token
+  * - false - Disable authentication
+  * If not specified and url is present, OAuth will be auto-detected unless custom headers are configured
+  */
+ auth?: "oauth" | "bearer" | false;
+ bearerToken?: string;
+ bearerTokenEnv?: string;
+ /** Read a static bearer token from the adapter-owned OS credential store. */
+ bearerTokenStore?: true;
+ /**
+  * OAuth configuration (optional).
+  * If not provided, the SDK will attempt dynamic client registration.
+  * Set to false to explicitly disable OAuth for this server.
+  */
+ oauth?: OAuthConfig | false;
+ lifecycle?: "keep-alive" | "lazy" | "lazy-keep-alive" | "eager";
+ idleTimeout?: number; // minutes, overrides global setting
+ requestTimeoutMs?: number; // milliseconds, overrides global request timeout when > 0
+ // Resource handling
+ exposeResources?: boolean;
+ // Direct tool registration
+ directTools?: boolean | string[];
+ // Override settings.toolPrefix for this server.
+ toolPrefix?: ToolPrefix;
+ // Include/exclude specific MCP tools/resources by original or prefixed name
+ includeTools?: string[];
+ excludeTools?: string[];
+ /**
+  * Extra search keywords per tool, keyed by original name, prefixed name, or
+  * glob (same matching rules as includeTools/excludeTools). Keywords boost
+  * mcp({ search }) ranking only — they never appear in tool schemas,
+  * describe output, or the metadata cache.
+  */
+ searchKeywords?: Record<string, string[]>;
+ // Require interactive approval before calling matching MCP tools/resources.
+ approveTools?: boolean | string[];
+ // Debug
+ debug?: boolean; // Show server stderr (default: false)
+ /** Enable metadata-only JSONL protocol tracing for this server. */
+ trace?: boolean;
+ /** Force a specific HTTP MCP transport. Used by Agent Plugins, whose `type` declares the transport and forbids client fallback. */
+ httpTransport?: "streamable-http" | "sse";
+ /** Client-managed persistent data directory for Agent Plugin stdio servers. */
+ pluginDataDir?: string;
+ /** Treat env values as already resolved literals. Used for Agent Plugin env rules. */
+ literalEnv?: boolean;
+ /**
+  * MCP protocol era negotiation for this server. Defaults to `"legacy"`
+  * (byte-equivalent to pre-2026 behavior — no `versionNegotiation` is sent).
+  * `"auto"` offers the SDK's default 2026-07-28+ modern versions with
+  * legacy fallback; `"2026-07-28"` pins the connection to that revision
+  * with no fallback. `auto` and `2026-07-28` must be set explicitly.
+  */
+ protocolVersion?: "legacy" | "auto" | "2026-07-28";
+ // Keep configuration visible without allowing connections or execution.
+ disabled?: boolean;
 }
 
 /** Only the literal boolean `true` disables a server. */
@@ -702,6 +706,10 @@ export interface CachedTool {
  uiResourceUri?: string;
  uiVisibility?: UiToolVisibility[];
  uiStreamMode?: "eager" | "stream-first";
+ /** CacheableResult hint from MCP 2026-07-28 list responses */
+ ttlMs?: number;
+ /** Shared-intermediary caching scope ("public" | "private") */
+ cacheScope?: "public" | "private";
 }
 
 export interface CachedResource {

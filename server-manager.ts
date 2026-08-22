@@ -39,10 +39,20 @@ import { resolveNpxBinary } from "./npx-resolver.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { logger } from "./logger.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
-import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import { invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
+import {
+  extractOAuthConfig,
+  supportsOAuth,
+  type McpOAuthRuntime,
+} from "./mcp-auth-flow.ts";
+import {
+  invalidateAuthEntryCache,
+  type AuthStorageOptions,
+} from "./mcp-auth.ts";
 import { getBearerTokenForUrl } from "./mcp-bearer-store.ts";
-import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
+import {
+  registerSamplingHandler,
+  type ServerSamplingConfig,
+} from "./sampling-handler.ts";
 import {
   handleUrlElicitation,
   registerElicitationHandler,
@@ -169,7 +179,11 @@ type UiStreamListener = (
 ) => void;
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
 
-export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
+export type ToolRefreshResult =
+  | "updated"
+  | "unchanged"
+  | "superseded"
+  | "refresh-timeout";
 
 const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
 
@@ -470,7 +484,10 @@ export class McpServerManager {
     }
 
     const toolsRevision = expectedConnection.toolsRevision ?? 0;
-    const refreshSignal = combineAbortSignals(healthOptions.signal, AbortSignal.timeout(timeout));
+    const refreshSignal = combineAbortSignals(
+      healthOptions.signal,
+      AbortSignal.timeout(timeout),
+    );
     let tools: McpTool[];
     try {
       tools = await this.fetchAllTools(expectedConnection.client, {
@@ -480,10 +497,16 @@ export class McpServerManager {
       });
     } catch (error) {
       throwIfAborted(ownedSignal);
-      if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+      if (
+        this.connections.get(name) !== expectedConnection ||
+        expectedConnection.status !== "connected"
+      ) {
         return "superseded";
       }
-      if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
+      if (
+        error instanceof SdkError &&
+        error.code === SdkErrorCode.RequestTimeout
+      ) {
         return "refresh-timeout";
       }
       throw error;
@@ -808,10 +831,17 @@ export class McpServerManager {
     }
   }
 
-  private async enrichHttpConnectionError(definition: ServerDefinition, error: unknown): Promise<Error> {
-    const originalMessage = error instanceof Error ? error.message : String(error);
+  private async enrichHttpConnectionError(
+    definition: ServerDefinition,
+    error: unknown,
+  ): Promise<Error> {
+    const originalMessage =
+      error instanceof Error ? error.message : String(error);
     if (isTransientHttpConnectError(error)) {
-      return new Error(`${originalMessage} — endpoint is temporarily unavailable (HTTP 503)`, { cause: error });
+      return new Error(
+        `${originalMessage} — endpoint is temporarily unavailable (HTTP 503)`,
+        { cause: error },
+      );
     }
     try {
       const probe = await probeMcpEndpoint(resolveServerUrl(definition)!);
@@ -1078,7 +1108,14 @@ export class McpServerManager {
   }> {
     throwIfAborted(signal);
     const serverUrl = resolveServerUrl(definition)!;
-    const url = new URL(serverUrl);
+    let url: URL;
+    try {
+      url = new URL(serverUrl);
+    } catch {
+      throw new Error(
+        `MCP server "${serverName}" has an invalid url: ${serverUrl}`,
+      );
+    }
 
     // Resolve secret commands only for this connection attempt, without
     // mutating the persisted configuration.
@@ -1100,11 +1137,16 @@ export class McpServerManager {
         : undefined;
     if (definition.auth === "bearer") {
       const token = commandBearer
-        ? resolveCommandSecret(commandBearer, `MCP server "${serverName}" HTTP bearer token`)
-        : resolveBearerToken(definition)
-          ?? (definition.bearerToken === undefined && definition.bearerTokenEnv === undefined && definition.bearerTokenStore === true
+        ? resolveCommandSecret(
+            commandBearer,
+            `MCP server "${serverName}" HTTP bearer token`,
+          )
+        : (resolveBearerToken(definition) ??
+          (definition.bearerToken === undefined &&
+          definition.bearerTokenEnv === undefined &&
+          definition.bearerTokenStore === true
             ? getBearerTokenForUrl(serverName, serverUrl)
-            : undefined);
+            : undefined));
       if (token) headers["Authorization"] = `Bearer ${token}`;
     }
 
@@ -1272,7 +1314,32 @@ export class McpServerManager {
         cursor ? { cursor } : undefined,
         requestOptions,
       );
-      allTools.push(...(result.tools ?? []));
+      // Capture page-level CacheableResult hints (MCP 2026-07-28) and stamp
+      // them on that page's tools; pages may declare different hints.
+      const pageTools: McpTool[] = result.tools ?? [];
+      const rawTtlMs = (result as { ttlMs?: unknown }).ttlMs;
+      const rawCacheScope = (result as { cacheScope?: unknown }).cacheScope;
+      const ttlMs =
+        typeof rawTtlMs === "number" &&
+        Number.isFinite(rawTtlMs) &&
+        rawTtlMs >= 0
+          ? rawTtlMs
+          : undefined;
+      const cacheScope =
+        rawCacheScope === "public"
+          ? ("public" as const)
+          : rawCacheScope === "private"
+            ? ("private" as const)
+            : undefined;
+      allTools.push(
+        ...(ttlMs === undefined && cacheScope === undefined
+          ? pageTools
+          : pageTools.map((tool) => ({
+              ...tool,
+              ...(ttlMs === undefined ? {} : { ttlMs }),
+              ...(cacheScope === undefined ? {} : { cacheScope }),
+            }))),
+      );
       cursor = result.nextCursor;
     } while (cursor);
 

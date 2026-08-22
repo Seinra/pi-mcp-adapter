@@ -44,12 +44,13 @@ function createCallToolResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createManager(callToolImpl?: (...args: unknown[]) => Promise<unknown>) {
+function createManager(
+  callToolImpl?: (...args: unknown[]) => Promise<unknown>,
+) {
   const connected = {
     status: "connected",
     client: {
-      callTool:
-        callToolImpl ?? vi.fn(async () => createCallToolResult()),
+      callTool: callToolImpl ?? vi.fn(async () => createCallToolResult()),
     },
     tools: [{ name: "tool", description: "Demo" }],
     resources: [],
@@ -184,8 +185,14 @@ describe("proxy-modes 2026-07-28 features", () => {
       const state = createState(manager);
 
       await executeCall(
-        state, "demo_tool", {}, "demo",
-        undefined, undefined, undefined, undefined,
+        state,
+        "demo_tool",
+        {},
+        "demo",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         "token123",
       );
 
@@ -193,7 +200,9 @@ describe("proxy-modes 2026-07-28 features", () => {
         "token123",
         expect.any(Function),
       );
-      expect(manager.unregisterProgressListener).toHaveBeenCalledWith("token123");
+      expect(manager.unregisterProgressListener).toHaveBeenCalledWith(
+        "token123",
+      );
     });
 
     it("cleans up the listener when the call fails", async () => {
@@ -206,13 +215,21 @@ describe("proxy-modes 2026-07-28 features", () => {
 
       await expect(
         executeCall(
-          state, "demo_tool", {}, "demo",
-          undefined, undefined, undefined, undefined,
+          state,
+          "demo_tool",
+          {},
+          "demo",
+          undefined,
+          undefined,
+          undefined,
+          undefined,
           "token123",
         ),
       ).resolves.toBeDefined();
 
-      expect(manager.unregisterProgressListener).toHaveBeenCalledWith("token123");
+      expect(manager.unregisterProgressListener).toHaveBeenCalledWith(
+        "token123",
+      );
     });
 
     it("puts the progress token into request options _meta", async () => {
@@ -222,13 +239,20 @@ describe("proxy-modes 2026-07-28 features", () => {
       const state = createState(manager);
 
       await executeCall(
-        state, "demo_tool", {}, "demo",
-        undefined, undefined, undefined, undefined,
+        state,
+        "demo_tool",
+        {},
+        "demo",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         "token123",
       );
 
-      const [, requestOptions] = (manager.getConnection().client.callTool as any)
-        .mock.calls[0];
+      const [, requestOptions] = (
+        manager.getConnection().client.callTool as any
+      ).mock.calls[0];
       expect(requestOptions._meta).toMatchObject({ progressToken: "token123" });
     });
 
@@ -239,20 +263,25 @@ describe("proxy-modes 2026-07-28 features", () => {
       const state = createState(manager);
 
       await executeCall(
-        state, "demo_tool", {}, "demo",
-        undefined, undefined, undefined, undefined,
+        state,
+        "demo_tool",
+        {},
+        "demo",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         "token123",
       );
 
-      const handler = manager.registerProgressListener.mock.calls[0][1] as (
-        n: { progress: number; total?: number; message?: string },
-      ) => void;
+      const handler = manager.registerProgressListener.mock.calls[0][1] as (n: {
+        progress: number;
+        total?: number;
+        message?: string;
+      }) => void;
       handler({ progress: 50, total: 100, message: "Working" });
 
-      expect(state.ui.notify).toHaveBeenCalledWith(
-        "Working (50/100)",
-        "info",
-      );
+      expect(state.ui.notify).toHaveBeenCalledWith("Working (50/100)", "info");
     });
   });
 
@@ -264,8 +293,14 @@ describe("proxy-modes 2026-07-28 features", () => {
       const state = createState(manager);
 
       await executeCall(
-        state, "demo_tool", {}, "demo",
-        undefined, undefined, undefined, "2026-07-28",
+        state,
+        "demo_tool",
+        {},
+        "demo",
+        undefined,
+        undefined,
+        undefined,
+        "2026-07-28",
       );
 
       expect(manager.getRequestOptions).toHaveBeenCalledWith(

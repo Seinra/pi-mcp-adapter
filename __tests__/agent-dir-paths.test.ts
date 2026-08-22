@@ -8,30 +8,30 @@ describe("Pi agent dir paths", () => {
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalOAuthDir = process.env.MCP_OAUTH_DIR;
   const originalPackageDir = process.env.PI_PACKAGE_DIR;
-      const originalArcAgentDir = process.env.ARC_CODING_AGENT_DIR;
-      const originalUserProfile = process.env.USERPROFILE;
+  const originalArcAgentDir = process.env.ARC_CODING_AGENT_DIR;
+  const originalUserProfile = process.env.USERPROFILE;
 
-      // Node's os.homedir() prefers USERPROFILE over HOME on Windows, so tests
-      // that fake the home directory must stub both variables on win32.
-      const setHome = (home: string) => {
-        process.env.HOME = home;
-        if (process.platform === "win32") {
-          process.env.USERPROFILE = home;
-        }
-      };
+  // Node's os.homedir() prefers USERPROFILE over HOME on Windows, so tests
+  // that fake the home directory must stub both variables on win32.
+  const setHome = (home: string) => {
+    process.env.HOME = home;
+    if (process.platform === "win32") {
+      process.env.USERPROFILE = home;
+    }
+  };
 
-      beforeEach(() => {
+  beforeEach(() => {
     vi.resetModules();
     delete process.env.PI_PACKAGE_DIR;
   });
 
-      afterEach(() => {
-        process.env.HOME = originalHome;
-        if (originalUserProfile === undefined) {
-          delete process.env.USERPROFILE;
-        } else {
-          process.env.USERPROFILE = originalUserProfile;
-        }
+  afterEach(() => {
+    process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
     if (originalAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
@@ -65,18 +65,34 @@ describe("Pi agent dir paths", () => {
     const { getPiGlobalConfigPath } = await import("../config.ts");
     const { getMetadataCachePath } = await import("../metadata-cache.ts");
     const { getOnboardingStatePath } = await import("../onboarding-state.ts");
-    const { getAuthEntryFilePath, saveAuthEntry } = await import("../mcp-auth.ts");
+    const { getAuthEntryFilePath, saveAuthEntry } = await import(
+      "../mcp-auth.ts"
+    );
 
     expect(getAgentDir()).toBe(agentDir);
     expect(getPiGlobalConfigPath()).toBe(join(agentDir, "mcp.json"));
     expect(getMetadataCachePath()).toBe(join(agentDir, "mcp-cache.json"));
-    expect(getOnboardingStatePath()).toBe(join(agentDir, "mcp-onboarding.json"));
+    expect(getOnboardingStatePath()).toBe(
+      join(agentDir, "mcp-onboarding.json"),
+    );
 
-    saveAuthEntry("demo", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
+    saveAuthEntry(
+      "demo",
+      { tokens: { accessToken: "token" } },
+      "https://example.com/mcp",
+    );
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
-    expect(getAuthEntryFilePath("demo").startsWith(join(agentDir, "mcp-oauth"))).toBe(true);
-    expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(false);
-    expect(existsSync(join(home, ".pi", "agent", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
+    expect(
+      getAuthEntryFilePath("demo").startsWith(join(agentDir, "mcp-oauth")),
+    ).toBe(true);
+    expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(
+      false,
+    );
+    expect(
+      existsSync(
+        join(home, ".pi", "agent", "mcp-oauth", "demo", "tokens.json"),
+      ),
+    ).toBe(false);
   });
 
   it("expands tilde in PI_CODING_AGENT_DIR", async () => {
@@ -94,7 +110,10 @@ describe("Pi agent dir paths", () => {
     const packageDir = mkdtempSync(join(tmpdir(), "pi-mcp-package-dir-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-"));
     setHome(home);
-    writeFileSync(join(packageDir, "package.json"), JSON.stringify({ piConfig: { name: "arc", configDir: ".arc" } }));
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({ piConfig: { name: "arc", configDir: ".arc" } }),
+    );
     process.env.PI_PACKAGE_DIR = packageDir;
 
     const { getAgentDir } = await import("../agent-dir.ts");
@@ -119,12 +138,20 @@ describe("Pi agent dir paths", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.MCP_OAUTH_DIR = oauthDir;
 
-    const { getAuthEntryFilePath, saveAuthEntry } = await import("../mcp-auth.ts");
+    const { getAuthEntryFilePath, saveAuthEntry } = await import(
+      "../mcp-auth.ts"
+    );
 
-    saveAuthEntry("demo", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
+    saveAuthEntry(
+      "demo",
+      { tokens: { accessToken: "token" } },
+      "https://example.com/mcp",
+    );
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
     expect(getAuthEntryFilePath("demo").startsWith(oauthDir)).toBe(true);
     expect(existsSync(join(oauthDir, "demo", "tokens.json"))).toBe(false);
-    expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(false);
+    expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(
+      false,
+    );
   });
 });

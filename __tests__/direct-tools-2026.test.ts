@@ -20,7 +20,9 @@ vi.mock("../mcp-auth-flow.ts", () => ({
   supportsOAuth: mocks.supportsOAuth,
 }));
 
-function createConnectedClient(callToolImpl?: (...args: unknown[]) => Promise<unknown>) {
+function createConnectedClient(
+  callToolImpl?: (...args: unknown[]) => Promise<unknown>,
+) {
   return {
     callTool:
       callToolImpl ??
@@ -58,7 +60,11 @@ function createState(client: ReturnType<typeof createConnectedClient>) {
         resources: [],
       })),
       getRequestOptions: vi.fn(
-        (_name: string, _signal?: AbortSignal, _protocolVersion?: string) => ({}),
+        (
+          _name: string,
+          _signal?: AbortSignal,
+          _protocolVersion?: string,
+        ) => ({}),
       ),
       registerProgressListener: vi.fn(),
       unregisterProgressListener: vi.fn(),

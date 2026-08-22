@@ -6,7 +6,7 @@
 
 Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning your context window.
 
-https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
+<https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a>
 
 ## Why This Exists
 
@@ -29,7 +29,7 @@ Restart Pi after installation.
 The adapter reads standard MCP files automatically. No extra setup needed if you already have them.
 
 | You already have... | What happens |
-|---------------------|--------------|
+| --------------------- | -------------- |
 | `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
 | Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
 | Nothing configured yet | Run `/mcp setup` to scaffold a minimal `.mcp.json`, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
@@ -76,6 +76,7 @@ Servers are **lazy by default** — they won't connect until you actually call o
 ```
 mcp({ search: "screenshot" })
 ```
+
 ```
 chrome_devtools_take_screenshot
   Take a screenshot of the page or element.
@@ -84,6 +85,7 @@ chrome_devtools_take_screenshot
     format (enum: "png", "jpeg", "webp") [default: "png"]
     fullPage (boolean) - Full page instead of viewport
 ```
+
 ```
 mcp({ tool: "chrome_devtools_take_screenshot", args: { format: "png" } })
 ```
@@ -99,7 +101,7 @@ Two calls instead of 26 tools cluttering the context.
 Use the shared MCP files when you want one setup to work across hosts, and Pi-owned files when you need Pi-specific overrides or settings.
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `~/.config/mcp/mcp.json` | User-global shared MCP config |
 | `~/.agents/mcp.json` | User-global tool-agnostic MCP config |
 | `~/.agents/mcp/mcp.json` | User-global tool-agnostic MCP config |
@@ -235,7 +237,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 ```
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `command` | Executable for stdio transport; mutually exclusive with `url` and `socket` |
 | `args` | Command arguments |
 | `socket` | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
@@ -276,9 +278,11 @@ The adapter defaults to `protocolVersion: "legacy"`. Omitting the field uses the
 
 Use `"auto"` to probe for MCP 2026-07-28 and conservatively fall back to the classic handshake when the server provides legacy evidence. Set it for Cloudflare Workers `createMcpHandler` and other MCP SDK v2 stateless servers. The adapter keeps `"legacy"` as the global default for compatibility. For stdio servers, the SDK probes with a short-lived sibling process before starting the session process, so each fresh auto connection adds one process spawn and can wait for the configured request timeout. Explicit Unix sockets are custom transports and probe in place. HTTP auto negotiation uses the actual Streamable HTTP connection; the adapter falls back to legacy SSE only when the endpoint definitively rejects Streamable HTTP (for example 404/405/406/415), never for authentication failures, cancellation, timeouts, or server errors.
 
-Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback and fails if the server does not offer the requested version.
+Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback and fails if the server does not offer the requested version. Pinned modern connections omit the deprecated sampling capability during initialization for spec compliance.
 
-The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The adapter keeps strict OAuth issuer validation in every mode. Adapter-level roots support, standard MCP logging presentation, and configuration/UI for protocol cache hints are not yet implemented.
+Modern negotiated results carry extra era-specific fields: `structuredContent`, `outputSchema`, `resultType`, and `serverInfo` from call-tool results are surfaced through result details on both proxy and direct-tool calls, so hosts can consume rich results without parsing raw envelopes.
+
+The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The adapter keeps strict OAuth issuer validation in every mode. Server-advertised cache hints (`ttlMs`, `cacheScope`) are honored automatically by the metadata cache — an entry expires at its fetch time plus the tightest declared TTL instead of serving stale catalogs until the default max age. Adapter-level roots support and standard MCP logging presentation are not yet implemented, and there is no configuration/UI for cache hints yet.
 
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
@@ -368,7 +372,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 ```
 
 | Setting | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
@@ -536,7 +540,7 @@ Per-server:
 ```
 
 | Value | Behavior |
-|-------|----------|
+| ------- | ---------- |
 | `true` | Register all tools from this server as individual Pi tools |
 | `["tool_a", "tool_b"]` | Register only these tools (use original MCP names) |
 | Omitted or `false` | Proxy only (default) |
@@ -622,7 +626,7 @@ MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-
 **Message types from UI:**
 
 | Type | Purpose |
-|------|---------|
+| ------ | --------- |
 | `prompt` | User message that triggers an agent response |
 | `intent` | Structured action with name + params |
 | `notify` | Fire-and-forget notification |
@@ -685,7 +689,7 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/mcp.json` only 
 ## Usage
 
 | Mode | Example |
-|------|---------|
+| ------ | --------- |
 | Status | `mcp({ })` |
 | List server | `mcp({ server: "name" })` |
 | Search | `mcp({ search: "screenshot navigate", limit: 12, offset: 0 })` |
@@ -737,7 +741,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 ## Commands
 
 | Command | What it does |
-|---------|--------------|
+| --------- | -------------- |
 | `/mcp` | Interactive panel and first-run onboarding surface |
 | `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |

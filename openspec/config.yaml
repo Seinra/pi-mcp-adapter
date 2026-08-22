@@ -1,9 +1,0 @@
-project: pi-mcp-adapter
-repository: https://github.com/nicobailon/pi-mcp-adapter
-artifactStore: openspec
-executionMode: auto
-deliveryStrategy: ask-on-risk
-reviewBudget: 400
-chainStrategy: stacked-to-main
-strictTDD: false
-testCommand: ""

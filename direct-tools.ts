@@ -13,6 +13,7 @@ import type {
   McpConfig,
   McpContent,
   ToolPrefix,
+  McpCallToolResultMeta,
 } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
@@ -761,6 +762,11 @@ export function createDirectToolExecutor(
           result.contents ?? [],
           state.owner?.signal,
         );
+        const resourceMeta = result._meta as
+          | { resultType?: string; serverInfo?: Record<string, unknown> }
+          | undefined;
+        const resultType = resourceMeta?.resultType;
+        const serverInfo = resourceMeta?.serverInfo;
         const guarded = await guardMcpOutput(
           content.length > 0
             ? content
@@ -773,6 +779,8 @@ export function createDirectToolExecutor(
             server: spec.serverName,
             resourceUri: spec.resourceUri,
             ...guardedMcpDetails(guarded),
+            ...(resultType ? { resultType } : {}),
+            ...(serverInfo ? { serverInfo } : {}),
           },
         };
       }
@@ -817,11 +825,20 @@ export function createDirectToolExecutor(
         result as unknown as import("@modelcontextprotocol/client").CallToolResult,
       );
 
-      const resultMeta = result._meta as
-        | { resultType?: string; serverInfo?: Record<string, unknown> }
-        | undefined;
-      const resultType = resultMeta?.resultType;
-      const serverInfo = resultMeta?.serverInfo;
+      const meta = result._meta as Record<string, unknown> | undefined;
+      const resultMeta: McpCallToolResultMeta = {
+        protocolVersion: meta?.protocolVersion as string | undefined,
+        structuredContent: (result as any).structuredContent as Record<string, unknown> | undefined,
+        outputSchema: (result as any).outputSchema as Record<string, unknown> | undefined,
+        progressToken: meta?.progressToken as string | number | undefined,
+      };
+      if (result.resultType && typeof result.resultType === "string") resultMeta.resultType = result.resultType;
+      if (meta?.serverInfo) resultMeta.serverInfo = meta.serverInfo as Record<string, unknown>;
+      const resultType = resultMeta.resultType;
+      const serverInfo = resultMeta.serverInfo;
+      const structuredContent = resultMeta.structuredContent;
+      const outputSchema = resultMeta.outputSchema;
+      const progressTokenResult = resultMeta.progressToken;
 
       if (result.isError) {
         const mcpContent = (result.content ?? []) as McpContent[];
@@ -839,14 +856,23 @@ export function createDirectToolExecutor(
           suffix: schemaText,
           emptyTextFallback: "Tool execution failed",
         });
-        return {
-          content: guarded.content,
-          details: {
-            error: "tool_error",
-            server: spec.serverName,
-            ...guardedMcpDetails(guarded),
-          },
-        };
+            return {
+              content: guarded.content,
+              details: {
+                error: "tool_error",
+                server: spec.serverName,
+                ...guardedMcpDetails(guarded),
+                ...(resultType ? { resultType } : {}),
+                ...(serverInfo ? { serverInfo } : {}),
+                ...(structuredContent
+                  ? { structuredContent }
+                  : {}),
+                ...(outputSchema ? { outputSchema } : {}),
+                ...(progressTokenResult
+                  ? { progressToken: progressTokenResult }
+                  : {}),
+              },
+            };
       }
 
       const content = resolveMcpResultContent(
@@ -868,12 +894,19 @@ export function createDirectToolExecutor(
           details: {
             server: spec.serverName,
             tool: spec.originalName,
-            uiOpen: uiSummary.uiOpen,
-            uiViewer: uiSummary.uiViewer,
-            uiUrl: uiSummary.uiUrl,
-            ...guardedMcpDetails(guarded),
-            ...(resultType ? { resultType } : {}),
-            ...(serverInfo ? { serverInfo } : {}),
+                uiOpen: uiSummary.uiOpen,
+                uiViewer: uiSummary.uiViewer,
+                uiUrl: uiSummary.uiUrl,
+                ...guardedMcpDetails(guarded),
+                ...(resultType ? { resultType } : {}),
+                ...(serverInfo ? { serverInfo } : {}),
+                ...(structuredContent
+                  ? { structuredContent }
+                  : {}),
+                ...(outputSchema ? { outputSchema } : {}),
+                ...(progressTokenResult
+                  ? { progressToken: progressTokenResult }
+                  : {}),
           },
         };
       }
@@ -881,16 +914,23 @@ export function createDirectToolExecutor(
       const guarded = await guardMcpOutput(outputContent, {
         ...outputGuardOptions,
       });
-      return {
-        content: guarded.content,
-        details: {
-          server: spec.serverName,
-          tool: spec.originalName,
-          ...guardedMcpDetails(guarded),
-          ...(resultType ? { resultType } : {}),
-          ...(serverInfo ? { serverInfo } : {}),
-        },
-      };
+          return {
+            content: guarded.content,
+            details: {
+              server: spec.serverName,
+              tool: spec.originalName,
+              ...guardedMcpDetails(guarded),
+              ...(resultType ? { resultType } : {}),
+              ...(serverInfo ? { serverInfo } : {}),
+              ...(structuredContent
+                ? { structuredContent }
+                : {}),
+              ...(outputSchema ? { outputSchema } : {}),
+              ...(progressTokenResult
+                ? { progressToken: progressTokenResult }
+                : {}),
+            },
+          };
     } catch (error) {
       if (error instanceof SessionRecoveryAuthRequiredError) {
         const message =

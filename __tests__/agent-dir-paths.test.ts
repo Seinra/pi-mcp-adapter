@@ -8,15 +8,30 @@ describe("Pi agent dir paths", () => {
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalOAuthDir = process.env.MCP_OAUTH_DIR;
   const originalPackageDir = process.env.PI_PACKAGE_DIR;
-  const originalArcAgentDir = process.env.ARC_CODING_AGENT_DIR;
+      const originalArcAgentDir = process.env.ARC_CODING_AGENT_DIR;
+      const originalUserProfile = process.env.USERPROFILE;
 
-  beforeEach(() => {
+      // Node's os.homedir() prefers USERPROFILE over HOME on Windows, so tests
+      // that fake the home directory must stub both variables on win32.
+      const setHome = (home: string) => {
+        process.env.HOME = home;
+        if (process.platform === "win32") {
+          process.env.USERPROFILE = home;
+        }
+      };
+
+      beforeEach(() => {
     vi.resetModules();
     delete process.env.PI_PACKAGE_DIR;
   });
 
-  afterEach(() => {
-    process.env.HOME = originalHome;
+      afterEach(() => {
+        process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) {
+          delete process.env.USERPROFILE;
+        } else {
+          process.env.USERPROFILE = originalUserProfile;
+        }
     if (originalAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
@@ -42,7 +57,7 @@ describe("Pi agent dir paths", () => {
   it("uses PI_CODING_AGENT_DIR for Pi-owned config and state files", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-"));
-    process.env.HOME = home;
+    setHome(home);
     process.env.PI_CODING_AGENT_DIR = agentDir;
     delete process.env.MCP_OAUTH_DIR;
 
@@ -66,7 +81,7 @@ describe("Pi agent dir paths", () => {
 
   it("expands tilde in PI_CODING_AGENT_DIR", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-home-"));
-    process.env.HOME = home;
+    setHome(home);
     process.env.PI_CODING_AGENT_DIR = "~/custom-pi-agent";
 
     const { getAgentDir } = await import("../agent-dir.ts");
@@ -78,7 +93,7 @@ describe("Pi agent dir paths", () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-home-"));
     const packageDir = mkdtempSync(join(tmpdir(), "pi-mcp-package-dir-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-"));
-    process.env.HOME = home;
+    setHome(home);
     writeFileSync(join(packageDir, "package.json"), JSON.stringify({ piConfig: { name: "arc", configDir: ".arc" } }));
     process.env.PI_PACKAGE_DIR = packageDir;
 
@@ -100,7 +115,7 @@ describe("Pi agent dir paths", () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-"));
     const oauthDir = mkdtempSync(join(tmpdir(), "pi-mcp-oauth-dir-"));
-    process.env.HOME = home;
+    setHome(home);
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.MCP_OAUTH_DIR = oauthDir;
 

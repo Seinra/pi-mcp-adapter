@@ -23,10 +23,15 @@ import {
   type McpTool,
   type McpResource,
   type McpPrompt,
+  type McpResourceTemplate,
   type ServerDefinition,
   type ServerStreamResultPatchNotification,
   type Transport,
   type McpTraceSettings,
+  type McpProgressNotification,
+  type McpCompletionContext,
+  type McpCompletionArgument,
+  type McpCompletionResult,
   SERVER_STREAM_RESULT_PATCH_METHOD,
   serverStreamResultPatchNotificationSchema,
 } from "./types.ts";
@@ -56,7 +61,7 @@ import { combineAbortSignals } from "./runtime-owner.ts";
 import {
   createMcpTraceWriter,
   isMcpTraceEnabled,
-  McpTraceWriter,
+  type McpTraceWriter,
   type McpTraceObserver,
   traceTransportKind,
   wrapTransportWithMcpTrace,
@@ -146,6 +151,7 @@ export interface ServerConnection {
   /** Monotonic guard against older refresh responses replacing newer notifications. */
   toolsRevision?: number;
   resources: McpResource[];
+  resourceTemplates: McpResourceTemplate[];
   prompts: McpPrompt[];
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;
@@ -199,6 +205,11 @@ export class McpServerManager {
   private traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
   private stopped = false;
+  /** Progress listeners for per-request progressToken correlation. */
+  private progressListeners = new Map<
+    string,
+    (notification: McpProgressNotification) => void
+  >();
 
   /** Default cwd for stdio servers without an explicit config `cwd`. */
   constructor(private readonly defaultCwd?: string) {}
@@ -298,7 +309,7 @@ export class McpServerManager {
 
     return {
       ...(ownedSignal ? { signal: ownedSignal } : {}),
-      ...(timeout !== undefined ? { timeout } : {}),
+      ...(timeout === undefined ? {} : { timeout }),
       ...(protocolVersion ? { protocolVersion } : {}),
     };
   }
@@ -613,7 +624,7 @@ export class McpServerManager {
         command,
         args,
         env: resolveEnv(definition.env, name, definition.literalEnv === true),
-        ...(cwd !== undefined ? { cwd } : {}),
+        ...(cwd === undefined ? {} : { cwd }),
         stderr: definition.debug ? "inherit" : "pipe",
       });
       // Keep non-debug child diagnostics available for connection failures without
@@ -643,6 +654,7 @@ export class McpServerManager {
           definition,
           tools: [],
           resources: [],
+          resourceTemplates: [],
           prompts: [],
           lastUsedAt: Date.now(),
           inFlight: 0,
@@ -680,6 +692,7 @@ export class McpServerManager {
         );
       }
       this.attachAdapterNotificationHandlers(name, client);
+      this.attachProgressNotificationHandler(name, client);
 
       const instructions = client.getInstructions?.();
       const connection: ServerConnection = {
@@ -689,8 +702,9 @@ export class McpServerManager {
         tools: [],
         toolsRevision: 0,
         resources: [],
+        resourceTemplates: [],
         prompts: [],
-        ...(instructions !== undefined ? { instructions } : {}),
+        ...(instructions === undefined ? {} : { instructions }),
         lastUsedAt: Date.now(),
         inFlight: 0,
         status: "connected",
@@ -705,15 +719,21 @@ export class McpServerManager {
         }
       };
 
-      // Discover tools, resources, and prompts. Resource and prompt listing is
-      // optional: only servers advertising the capability are queried.
-      const [tools, resources, promptResult] = await Promise.all([
-        this.fetchAllTools(client, requestOptions),
-        this.fetchAllResources(client, requestOptions),
-        this.fetchAllPrompts(client, requestOptions),
-      ]);
+      // Discover tools, resources, prompts, and resource templates.
+      // Resource and prompt listing is optional: only servers advertising the capability are queried.
+      const [tools, resources, promptResult, resourceTemplates] =
+        await Promise.all([
+          this.fetchAllTools(client, requestOptions),
+          this.fetchAllResources(client, requestOptions),
+          this.fetchAllPrompts(client, requestOptions),
+          // Try to fetch resource templates; if server doesn't support it, return empty array
+          this.fetchAllResourceTemplates(client, requestOptions).catch(
+            () => [],
+          ),
+        ]);
       connection.tools = tools;
       connection.resources = resources;
+      connection.resourceTemplates = resourceTemplates;
       connection.prompts = promptResult.prompts;
       connection.promptDiscoveryFailed = promptResult.failed;
 
@@ -758,6 +778,7 @@ export class McpServerManager {
           definition,
           tools: [],
           resources: [],
+          resourceTemplates: [],
           prompts: [],
           lastUsedAt: Date.now(),
           inFlight: 0,
@@ -835,25 +856,39 @@ export class McpServerManager {
     }
   }
 
-  private buildClientCapabilities() {
-    return {
-      ...(this.samplingConfig ? { sampling: {} } : {}),
-      ...(this.elicitationConfig
-        ? {
-            elicitation: {
-              form: {},
-              ...(this.elicitationConfig.allowUrl ? { url: {} } : {}),
-            },
-          }
-        : {}),
-    };
+  private buildClientCapabilities(
+    protocolVersion?: string,
+  ): Record<string, unknown> {
+    const caps: Record<string, unknown> = {};
+    // Sampling OMITTED when protocolVersion === "2026-07-28" (P0 Fix)
+    if (this.samplingConfig && protocolVersion !== "2026-07-28") {
+      caps.sampling = {};
+    }
+    if (this.elicitationConfig) {
+      caps.elicitation = {
+        form: {},
+        ...(this.elicitationConfig.allowUrl ? { url: {} } : {}),
+      };
+    }
+    return caps;
   }
 
   private createClient(
     serverName: string,
     definition: ServerDefinition,
   ): Client {
-    const capabilities = this.buildClientCapabilities();
+    // Resolve protocol version for capability negotiation (P0 Fix + T06)
+    let protocolVersion: string | undefined;
+    if (definition.protocolVersion === "2026-07-28") {
+      protocolVersion = "2026-07-28";
+    } else if (definition.protocolVersion === "legacy") {
+      protocolVersion = "legacy";
+    } else if (definition.protocolVersion === "auto") {
+      // Auto-negotiated; we don't know yet at client creation time
+      // Pass undefined — sampling will be included (legacy-safe)
+      protocolVersion = undefined;
+    }
+    const capabilities = this.buildClientCapabilities(protocolVersion);
     const versionNegotiation = resolveVersionNegotiation(definition);
     let client: Client;
     client = new Client(
@@ -1120,9 +1155,9 @@ export class McpServerManager {
       const authProvider =
         "provider" in authState ? authState.provider : undefined;
       const transportOptions = {
-        ...(requestInit !== undefined ? { requestInit } : {}),
-        ...(requestFetch !== undefined ? { fetch: requestFetch } : {}),
-        ...(authProvider !== undefined ? { authProvider } : {}),
+        ...(requestInit === undefined ? {} : { requestInit }),
+        ...(requestFetch === undefined ? {} : { fetch: requestFetch }),
+        ...(authProvider === undefined ? {} : { authProvider }),
         ...(authProvider !== undefined &&
         definition.oauth !== false &&
         definition.oauth?.skipIssuerMetadataValidation === true
@@ -1304,6 +1339,75 @@ export class McpServerManager {
     }
   }
 
+  /**
+   * Fetch all resource templates with pagination support.
+   * Tries SDK method first, falls back to raw request.
+   */
+  private async fetchAllResourceTemplates(
+    client: Client,
+    requestOptions?: RequestOptions,
+  ): Promise<McpResourceTemplate[]> {
+    const allTemplates: McpResourceTemplate[] = [];
+    let cursor: string | undefined;
+
+    do {
+      // Try SDK method first (if available)
+      let templates: McpResourceTemplate[] = [];
+      let nextCursor: string | undefined;
+      if (typeof client.listResourceTemplates === "function") {
+        const result = await client.listResourceTemplates(
+          cursor ? { cursor } : undefined,
+          requestOptions,
+        );
+        templates = (result.resourceTemplates ?? []).map((t) => {
+          const template: McpResourceTemplate = {
+            uriTemplate: t.uriTemplate,
+            name: t.name,
+            description: t.description ?? "",
+            mimeType: t.mimeType ?? "",
+          };
+          if (t._meta !== undefined) template._meta = t._meta;
+          return template;
+        });
+        nextCursor = result.nextCursor;
+      } else {
+        // Fallback to raw request
+        const result = (await client.request(
+          {
+            method: "resources/templates/list",
+            params: cursor ? { cursor } : {},
+          },
+          requestOptions,
+        )) as {
+          resourceTemplates?: Array<{
+            uriTemplate: string;
+            name: string;
+            description?: string;
+            mimeType?: string;
+            _meta?: Record<string, unknown>;
+          }>;
+          nextCursor?: string;
+        };
+        templates = (result.resourceTemplates ?? []).map((t) => {
+          const template: McpResourceTemplate = {
+            uriTemplate: t.uriTemplate,
+            name: t.name,
+            description: t.description ?? "",
+            mimeType: t.mimeType ?? "",
+          };
+          if (t._meta !== undefined) template._meta = t._meta;
+          return template;
+        });
+        nextCursor = result.nextCursor;
+      }
+
+      allTemplates.push(...templates);
+      cursor = nextCursor;
+    } while (cursor);
+
+    return allTemplates;
+  }
+
   private attachAdapterNotificationHandlers(
     serverName: string,
     client: Client,
@@ -1377,6 +1481,115 @@ export class McpServerManager {
       this.decrementInFlight(name);
       this.touch(name);
     }
+  }
+
+  /**
+   * List resource templates for a connected server.
+   * Returns empty array if server doesn't advertise templates capability.
+   */
+  listResourceTemplates(name: string): Promise<McpResourceTemplate[]> {
+    const connection = this.connections.get(name);
+    if (!connection || connection.status !== "connected") {
+      throw new Error(`Server "${name}" is not connected`);
+    }
+    return Promise.resolve(connection.resourceTemplates ?? []);
+  }
+
+  /**
+   * Request completions from a server.
+   * Tries SDK method first, falls back to raw request.
+   */
+  async complete(
+    name: string,
+    ref: McpCompletionContext,
+    argument: McpCompletionArgument,
+    signal?: AbortSignal,
+  ): Promise<McpCompletionResult> {
+    const connection = this.connections.get(name);
+    if (!connection || connection.status !== "connected") {
+      throw new Error(`Server "${name}" is not connected`);
+    }
+
+    const capabilities = connection.client.getServerCapabilities?.();
+    if (!capabilities?.completions) {
+      throw new Error(`Server "${name}" does not support completions`);
+    }
+
+    const requestOptions = this.getRequestOptions(name, signal);
+
+    // Convert our McpCompletionContext to SDK's expected format
+    const sdkRef =
+      ref.type === "ref/prompt"
+        ? { type: "ref/prompt" as const, name: ref.name }
+        : ref.type === "ref/resource"
+          ? { type: "ref/resource" as const, uri: ref.name }
+          : { type: ref.type, name: ref.name };
+
+    const sdkRefTyped = sdkRef as
+      | { type: "ref/prompt"; name: string }
+      | { type: "ref/resource"; uri: string };
+
+    try {
+      if (typeof connection.client.complete === "function") {
+        return (await connection.client.complete(
+          { ref: sdkRefTyped, argument },
+          requestOptions,
+        )) as McpCompletionResult;
+      }
+      return (await connection.client.request(
+        {
+          method: "completion/complete",
+          params: { ref: sdkRefTyped, argument },
+        },
+        requestOptions,
+      )) as McpCompletionResult;
+    } catch (error) {
+      if (requestOptions?.signal?.aborted)
+        throwIfAborted(requestOptions.signal);
+      throw error;
+    }
+  }
+
+  /**
+   * Register the global progress notification handler for a client.
+   * Called during connection establishment.
+   */
+  private attachProgressNotificationHandler(
+    _serverName: string,
+    client: Client,
+  ): void {
+    client.setNotificationHandler(
+      "notifications/progress",
+      (notification: { method: string; params: unknown }) => {
+        const params = notification.params as McpProgressNotification;
+        const listener = this.progressListeners.get(
+          String(params.progressToken),
+        );
+        if (listener) {
+          listener(params);
+        }
+        // No listener = drop silently (not our token)
+      },
+    );
+  }
+
+  /**
+   * Register a one-shot progress listener for a specific progressToken.
+   * String/number token normalized to string key.
+   */
+  registerProgressListener(
+    progressToken: string | number,
+    handler: (notification: McpProgressNotification) => void,
+  ): void {
+    this.progressListeners.set(String(progressToken), handler);
+  }
+
+  /**
+   * Unregister a progress listener by progressToken.
+   * String/number token normalized to string key.
+   */
+  unregisterProgressListener(progressToken: string | number): void {
+    this.progressListeners.delete(String(progressToken));
   }
 
   async close(name: string): Promise<void> {

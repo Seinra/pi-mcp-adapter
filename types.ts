@@ -43,6 +43,46 @@ export interface McpStatusSnapshot {
  readonly disabledCount: number;
 }
 
+// MCP 2026-07-28 Protocol Types
+export interface McpResourceTemplate {
+ uriTemplate: string;
+ name: string;
+ description?: string;
+ mimeType?: string;
+ _meta?: Record<string, unknown>;
+}
+
+export interface ListResourceTemplatesResult {
+ resourceTemplates: McpResourceTemplate[];
+ nextCursor?: string;
+ _meta?: Record<string, unknown>;
+}
+
+export interface McpCompletionArgument {
+ name: string;
+ value: string;
+}
+
+export interface McpCompletionContext {
+ type: "ref/prompt" | "ref/resource" | string;
+ name: string;
+}
+
+export interface McpCompletionResult {
+ completion: {
+  values: string[];
+  total?: number;
+  hasMore?: boolean;
+ };
+}
+
+export interface McpProgressNotification {
+ progressToken: string | number;
+ progress: number;
+ total?: number;
+ message?: string;
+}
+
 // Import sources for config
 export type ImportKind =
  | "cursor"
@@ -334,6 +374,7 @@ export interface McpContent {
   uri: string;
   text?: string;
   blob?: string;
+  mimeType?: string;
  };
  uri?: string;
  name?: string;
@@ -617,9 +658,17 @@ export interface PromptMetadata {
 
 export interface McpCallToolResultMeta {
  /** MCP protocol version negotiated for this call (e.g., "2026-07-28") */
- protocolVersion?: string;
+ protocolVersion?: string | undefined;
  /** Optional structured content from the tool result */
- structuredContent?: Record<string, unknown>;
+ structuredContent?: Record<string, unknown> | undefined;
+ /** Optional output schema for the tool result */
+ outputSchema?: Record<string, unknown> | undefined;
+ /** Optional progress token for progress notifications */
+ progressToken?: string | number | undefined;
+ /** Optional result type from 2026-07-28 protocol ("complete" | "input_required") */
+ resultType?: string | undefined;
+ /** Optional server info from 2026-07-28 protocol */
+ serverInfo?: Record<string, unknown> | undefined;
 }
 
 export interface DirectToolSpec {
@@ -668,11 +717,19 @@ export interface CachedPrompt {
  arguments?: { name: string; description?: string; required?: boolean }[];
 }
 
+export interface CachedResourceTemplate {
+ uriTemplate: string;
+ name: string;
+ description?: string;
+ mimeType?: string;
+}
+
 export interface ServerCacheEntry {
  configHash: string;
  tools: CachedTool[];
  resources: CachedResource[];
  prompts?: CachedPrompt[];
+ resourceTemplates?: CachedResourceTemplate[];
  instructions?: string;
  cachedAt: number;
 }

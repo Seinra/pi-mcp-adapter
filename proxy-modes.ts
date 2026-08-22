@@ -8,7 +8,12 @@ import {
 } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata, McpContent } from "./types.ts";
+import type {
+  ToolMetadata,
+  McpContent,
+  McpProgressNotification,
+  McpCallToolResultMeta,
+} from "./types.ts";
 import {
   getServerPrefix,
   isServerDisabled,
@@ -281,17 +286,15 @@ async function attemptAutoAuth(
               runtime: state.oauthRuntime,
             },
       );
+    } else if (signal) {
+      await authenticate(serverName, serverUrl, definition, {
+        signal,
+        runtime: state.oauthRuntime,
+      });
     } else {
-      if (signal) {
-        await authenticate(serverName, serverUrl, definition, {
-          signal,
-          runtime: state.oauthRuntime,
-        });
-      } else {
-        await authenticate(serverName, serverUrl, definition, {
-          runtime: state.oauthRuntime,
-        });
-      }
+      await authenticate(serverName, serverUrl, definition, {
+        runtime: state.oauthRuntime,
+      });
     }
     return { status: "success" };
   } catch (error) {
@@ -1296,6 +1299,7 @@ export async function executeCall(
   signal?: AbortSignal,
   origin?: "proxy" | "script",
   protocolVersion?: string,
+  progressToken?: string | number,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -1597,11 +1601,11 @@ export async function executeCall(
   }
 
   if (!serverName || !toolMeta) {
-    const nativeTool = !serverOverride
-      ? getPiTools?.().find(
+    const nativeTool = serverOverride
+      ? undefined
+      : getPiTools?.().find(
           (tool) => tool.name === toolName && tool.name !== "mcp",
-        )
-      : undefined;
+        );
     if (nativeTool) {
       return {
         content: [
@@ -1861,16 +1865,39 @@ export async function executeCall(
   }
 
   let uiSession: UiSessionRuntime | null = null;
-  const requestOptions =
+  let progressCleanup: (() => void) | undefined;
+
+  let requestOptions =
     state.manager.getRequestOptions?.(
       serverName,
       ownedSignal,
       protocolVersion,
     ) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
 
+  // T16: Register one-shot progress listener when progressToken provided
+  if (progressToken !== undefined) {
+    if (!requestOptions) requestOptions = {};
+    (requestOptions as Record<string, unknown>)._meta = {
+      ...((requestOptions as Record<string, unknown>)._meta as
+        | Record<string, unknown>
+        | undefined),
+      progressToken,
+    };
+    const progressHandler = (notification: McpProgressNotification) => {
+      const message = notification.message
+        ? `${notification.message} (${notification.progress}${notification.total === undefined ? "" : `/${notification.total}`})`
+        : `Progress: ${notification.progress}${notification.total === undefined ? "" : `/${notification.total}`}`;
+      state.ui?.notify(message, "info");
+    };
+    state.manager.registerProgressListener(progressToken, progressHandler);
+    progressCleanup = () =>
+      state.manager.unregisterProgressListener(progressToken);
+  }
+
   const outputGuardOptions = resolveMcpOutputGuardOptions(
     state.config.settings,
   );
+
   const recoverAuthConnection = async () => {
     const current = state.manager.getConnection(serverName);
     if (current?.status === "connected") return current;
@@ -1956,9 +1983,9 @@ export async function executeCall(
           toolName: toolMeta.originalName,
           toolArgs: normalizedArgs,
           uiResourceUri: toolMeta.uiResourceUri,
-          ...(toolMeta.uiStreamMode !== undefined
-            ? { streamMode: toolMeta.uiStreamMode }
-            : {}),
+          ...(toolMeta.uiStreamMode === undefined
+            ? {}
+            : { streamMode: toolMeta.uiStreamMode }),
           ...(signal ? { signal } : {}),
           onNeedsAuth: recoverAuthConnection,
         })
@@ -1986,11 +2013,27 @@ export async function executeCall(
         ),
     );
 
-    const resultMeta = result._meta as
-      | { resultType?: string; serverInfo?: Record<string, unknown> }
-      | undefined;
-    const resultType = resultMeta?.resultType;
-    const serverInfo = resultMeta?.serverInfo;
+    const meta = result._meta as Record<string, unknown> | undefined;
+    const resultMeta: McpCallToolResultMeta = {
+      protocolVersion: meta?.protocolVersion as string | undefined,
+      structuredContent: (result as any).structuredContent as
+        | Record<string, unknown>
+        | undefined,
+      outputSchema: (result as any).outputSchema as
+        | Record<string, unknown>
+        | undefined,
+      progressToken: meta?.progressToken as string | number | undefined,
+    };
+    if (result.resultType && typeof result.resultType === "string")
+      resultMeta.resultType = result.resultType;
+    if (meta?.serverInfo)
+      resultMeta.serverInfo = meta.serverInfo as Record<string, unknown>;
+
+    const resultType = resultMeta.resultType;
+    const serverInfo = resultMeta.serverInfo;
+    const structuredContent = resultMeta.structuredContent;
+    const outputSchema = resultMeta.outputSchema;
+    const progressTokenResult = resultMeta.progressToken;
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(
@@ -2023,6 +2066,11 @@ export async function executeCall(
             ...guardedMcpDetails(guarded),
             ...(resultType ? { resultType } : {}),
             ...(serverInfo ? { serverInfo } : {}),
+            ...(structuredContent ? { structuredContent } : {}),
+            ...(outputSchema ? { outputSchema } : {}),
+            ...(progressTokenResult
+              ? { progressToken: progressTokenResult }
+              : {}),
           },
         };
       }
@@ -2052,6 +2100,16 @@ export async function executeCall(
           uiUrl: uiSummary.uiUrl,
           ...(resultType ? { resultType } : {}),
           ...(serverInfo ? { serverInfo } : {}),
+          ...(structuredContent ? { structuredContent } : {}),
+          ...(outputSchema ? { outputSchema } : {}),
+          ...(progressTokenResult
+            ? { progressToken: progressTokenResult }
+            : {}),
+          ...(structuredContent ? { structuredContent } : {}),
+          ...(outputSchema ? { outputSchema } : {}),
+          ...(progressTokenResult
+            ? { progressToken: progressTokenResult }
+            : {}),
         },
       };
     }
@@ -2082,6 +2140,11 @@ export async function executeCall(
           ...guardedMcpDetails(guarded),
           ...(resultType ? { resultType } : {}),
           ...(serverInfo ? { serverInfo } : {}),
+          ...(structuredContent ? { structuredContent } : {}),
+          ...(outputSchema ? { outputSchema } : {}),
+          ...(progressTokenResult
+            ? { progressToken: progressTokenResult }
+            : {}),
         },
       };
     }
@@ -2106,6 +2169,9 @@ export async function executeCall(
         ...callIdentity,
         ...(resultType ? { resultType } : {}),
         ...(serverInfo ? { serverInfo } : {}),
+        ...(structuredContent ? { structuredContent } : {}),
+        ...(outputSchema ? { outputSchema } : {}),
+        ...(progressTokenResult ? { progressToken: progressTokenResult } : {}),
       },
     };
   } catch (error) {
@@ -2172,6 +2238,7 @@ export async function executeCall(
       },
     };
   } finally {
+    if (progressCleanup) progressCleanup();
     if (uiSession?.reused) {
       uiSession.close();
     }

@@ -1,6 +1,6 @@
 # Paridad MCP 2026-07-28 — Análisis y Priorización
 
-**Fecha**: 2026-08-20  
+**Fecha**: 2026-08-21  
 **Implementación actual**: pi-mcp-adapter v2.26.0+  
 **SDK objetivo**: `@modelcontextprotocol/client@2.0.0`, `@modelcontextprotocol/core@2.0.0`, `@modelcontextprotocol/sdk@1.30.0`
 
@@ -46,29 +46,35 @@
 | Version negotiation (`versionNegotiation`) | `resolveVersionNegotiation` | ✅ |
 | Legacy fallback warning | `connectHttpClient` log | ✅ |
 | Cache v2 persistence | `CACHE_VERSION=2` | ✅ |
+| **Sampling removal for 2026-07-28** | `server-manager.ts:buildClientCapabilities` | ✅ |
+| **Resource Templates** (`resources/templates/list`) | `server-manager.ts:fetchAllResourceTemplates`, `listResourceTemplates` | ✅ |
+| **Completions** (`completions` capability) | `server-manager.ts:complete` | ✅ |
+| **Progress Notifications** (`notifications/progress`) | `server-manager.ts:progressListeners`, `registerProgressListener`, `unregisterProgressListener` | ✅ |
+| **Structured Content** (`structuredContent` + `outputSchema`) | `proxy-modes.ts:executeCall`, `direct-tools.ts:createDirectToolExecutor` | ✅ |
+| **Resource Links / Embedded Resources** | `types.ts:McpContent` with `resource_link`/`resource` | ✅ |
 
-> **Estado**: 100% core path cubierto. Toolbelt Gateway compatible.
-
----
-
-### 🎯 PRIORIDAD 2 — CASOS DE USO ESPECÍFICOS (Evaluar demanda real)
-
-*Features que el spec 2026-07-28 trae nuevo, pero que solo valen la pena si hay request concreto:*
-
-| Feature | Spec | Complejidad | ¿Cuándo implementar? |
-| --------- | ------ | ------------- | --------------------- |
-| **Structured Content** (`structuredContent` + `outputSchema`) | Tool result validation | Baja | Si cliente pide validación automática de resultados |
-| **Resource Templates** (`resources/templates/list`) | Parametrized resources | Media | Si servers exponen templates parametrizados |
-| **Completions** (`completions` capability) | Argument autocompletion | Media | Si UX requiere autocompletado en args |
-| **Progress Notifications** (`notifications/progress`) | Long-running tool feedback | Media | Si tools tardan >30s y necesitan progress |
-| **OpenTelemetry Trace Context** | `_meta` trace propagation | Baja | Si tracing distribuido es requerido |
-| **`x-mcp-header`** | Tool params → HTTP headers | Media | Solo Streamable HTTP; si servers lo requieren |
-
-> **Criterio**: Solo si hay **issue/PR concreto** pidiendo la feature. No especulativo.
+> **Estado**: 100% core path + P2 features cubiertos. Toolbelt Gateway compatible.
 
 ---
 
-### 🏗️ PRIORIDAD 3 — CAMBIO DE ARQUITECTURA (Solo si justificación fuerte)
+### 🎯 PRIORIDAD 2 — IMPLEMENTADO (Features específicas del spec 2026-07-28)
+
+*Features que el spec 2026-07-28 trae nuevo, implementadas bajo demanda:*
+
+| Feature | Spec | Complejidad | Estado |
+| --------- | ------ | ------------- | ------- |
+| **Structured Content** (`structuredContent` + `outputSchema`) | Tool result validation | Baja | ✅ Done |
+| **Resource Templates** (`resources/templates/list`) | Parametrized resources | Media | ✅ Done |
+| **Completions** (`completions` capability) | Argument autocompletion | Media | ✅ Done |
+| **Progress Notifications** (`notifications/progress`) | Long-running tool feedback | Media | ✅ Done |
+| **OpenTelemetry Trace Context** | `_meta` trace propagation | Baja | ⏳ On-demand |
+| **`x-mcp-header`** | Tool params → HTTP headers | Media | ⏳ On-demand (solo Streamable HTTP) |
+
+> **Criterio**: Implementadas como parte de este ciclo. Funcionales y con tests.
+
+---
+
+### 🏗️ PRIORIDAD 3 — CAMBIO DE ARQUITECTURA (Bloqueado)
 
 *Requieren cambios profundos en cómo funciona el adapter:*
 
@@ -87,10 +93,10 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  ESTADO ACTUAL: 95% listo para producción                   │
+│  ESTADO ACTUAL: 100% listo para producción (P0+P2 done)     │
 │  ┌─────────────┬─────────────┬─────────────┬─────────────┐  │
 │  │ Core 2026   │ Específicos │ Arquitectura │ Deprecated  │  │
-│  │ ✅ 100%     │ ⏳ On-demand │ 🔒 Blocked   │ 🚫 Zero     │  │
+│  │ ✅ 100%     │ ✅ Done     │ 🔒 Blocked   │ 🚫 Zero     │  │
 │  └─────────────┴─────────────┴─────────────┴─────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -99,13 +105,13 @@
 
 1. **NO tocar deprecated** (roots, sampling, logging) — legacy ya lo cubre
 2. **Core 2026-07-28 completo** — Toolbelt Gateway funciona
-3. **Features específicas** — Solo bajo demanda concreta (issue/PR)
-4. **Arquitectura** — Bloqueada salvo justificación fuerte de cliente crítico
+3. **P2 Features específicas** — Implementadas (Structured Content, Resource Templates, Completions, Progress)
+4. **Arquitectura (P3)** — Bloqueada salvo justificación fuerte de cliente crítico
 
 ### Próximos Pasos Recomendados
 
 1. **Cerrar flujos SDD** (`sdd-archive` ya hecho)
-2. **Monitorear issues** — Si llega request de Structured Content / Resource Templates / Completions → evaluar Prioridad 2
+2. **Monitorear issues** — Si llega request de OpenTelemetry / x-mcp-header → evaluar Prioridad 2
 3. **No tocar Prioridad 3** salvo que Toolbelt Gateway lo exija explícitamente
 
 ---

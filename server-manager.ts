@@ -77,10 +77,14 @@ import {
   isMcpTraceEnabled,
   type McpTraceWriter,
   type McpTraceObserver,
-  traceTransportKind,
-  wrapTransportWithMcpTrace,
-} from "./mcp-trace.ts";
-import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
+      traceTransportKind,
+      wrapTransportWithMcpTrace,
+    } from "./mcp-trace.ts";
+    import {
+      enableReshapingProbeSiblings,
+      installEnvelopeReshaping,
+    } from "./envelope-reshape.ts";
+    import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
@@ -693,6 +697,8 @@ export class McpServerManager {
         ...(cwd === undefined ? {} : { cwd }),
         stderr: definition.debug ? "inherit" : "pipe",
       });
+      installEnvelopeReshaping(stdioTransport);
+      enableReshapingProbeSiblings(stdioTransport);
       // Keep non-debug child diagnostics available for connection failures without
       // retaining an unbounded stream or changing the existing debug behavior.
       if (stdioTransport.stderr) {
@@ -735,6 +741,8 @@ export class McpServerManager {
       transport = new UnixSocketClientTransport(
         resolveConfigPath(definition.socket!)!,
       );
+      installEnvelopeReshaping(transport);
+      enableReshapingProbeSiblings(transport);
     }
 
     if (traceObserver && !transportAlreadyTraced) {
@@ -1260,6 +1268,7 @@ export class McpServerManager {
         kind === "streamable-http"
           ? new StreamableHTTPClientTransport(url, transportOptions)
           : new SSEClientTransport(url, transportOptions);
+      installEnvelopeReshaping(baseTransport);
       const transport = traceObserver
         ? wrapTransportWithMcpTrace(
             baseTransport,

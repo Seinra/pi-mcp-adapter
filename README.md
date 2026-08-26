@@ -212,7 +212,7 @@ The package ships TypeScript source for Pi's source-loader and SDK integrations.
 
 A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
 
-With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` and `MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
+With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 
 Cooperating Pi extensions can use `pi-mcp-adapter/oauth` to reuse URL-bound OAuth tokens without deep-importing private files:
 
@@ -223,7 +223,7 @@ const tokens = await getMcpOAuthTokensForUrl("jira", "https://jira.example.com/m
 updateMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp", { accessToken: "..." });
 ```
 
-The public subpath exposes only token read/update helpers plus a status helper. The async read path uses the adapter's refresh logic before it returns tokens. The helpers keep secure-store storage, URL binding, refresh persistence, chunk handling, legacy import, and fail-closed credential-store errors. They do not expose client registration secrets, PKCE verifiers, or OAuth state.
+The public subpath exposes only token read/update helpers plus a status helper. The async read path uses the adapter's refresh logic before it returns tokens. The helpers keep secure-store storage, URL binding, refresh persistence, chunk handling, and fail-closed credential-store errors. They do not expose client registration secrets, PKCE verifiers, or OAuth state.
 
 ### Runtime status snapshots
 
@@ -284,7 +284,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `lifecycle` | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
 | `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used) |
-| `protocolVersion` | `"legacy"` (default), `"auto"`, or `"2026-07-28"`; modern negotiation is opt-in |
+| `protocolVersion` | `"auto"` (default) or `"2026-07-28"`; legacy protocol mode has been removed |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `toolPrefix` | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`) |
@@ -297,11 +297,11 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 
 #### Protocol version negotiation
 
-The adapter defaults to `protocolVersion: "legacy"`. Omitting the field uses the classic MCP initialize sequence without `server/discover` or 2026 headers, preserving compatibility with deployed 2025-era servers.
+The adapter defaults to `protocolVersion: "auto"`: SDK version negotiation probes `server/discover` at connect and falls back conservatively to the classic initialize handshake unless the outcome is definitive modern evidence.
 
-Use `"auto"` to probe for MCP 2026-07-28 and conservatively fall back to the classic handshake when the server provides legacy evidence. Set it for Cloudflare Workers `createMcpHandler` and other MCP SDK v2 stateless servers. The adapter keeps `"legacy"` as the global default for compatibility. For stdio servers, the SDK probes with a short-lived sibling process before starting the session process, so each fresh auto connection adds one process spawn and can wait for the configured request timeout. Explicit Unix sockets are custom transports and probe in place. HTTP auto negotiation uses the actual Streamable HTTP connection; the adapter falls back to legacy SSE only when the endpoint definitively rejects Streamable HTTP (for example 404/405/406/415), never for authentication failures, cancellation, timeouts, or server errors.
+`"auto"` targets MCP 2026-07-28-era servers, including Cloudflare Workers `createMcpHandler` and other MCP SDK v2 stateless servers. For stdio servers, the SDK probes with a short-lived sibling process before starting the session process, so each fresh auto connection adds one process spawn and can wait for the configured request timeout. Explicit Unix sockets are custom transports and probe in place.
 
-Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback and fails if the server does not offer the requested version. Pinned modern connections omit the deprecated sampling capability during initialization for spec compliance.
+Use `"2026-07-28"` to pin that revision with no fallback: connection fails if the server does not offer the requested version. Pinned modern connections omit the deprecated sampling capability during initialization for spec compliance.
 
 Modern negotiated results carry extra era-specific fields: `structuredContent`, `outputSchema`, `resultType`, and `serverInfo` from call-tool results are surfaced through result details on both proxy and direct-tool calls, so hosts can consume rich results without parsing raw envelopes.
 
@@ -407,7 +407,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default), `"prompt"` (detect/report only), or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
 | `agentPluginPaths` | Agent Plugins package directories to load MCP servers from. Relative paths resolve from the active project cwd. |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
-| `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |
+| `oauthDir` | Deprecated: previously used for legacy plaintext `tokens.json` storage and one-time import, both removed. Persistent OAuth credentials live in the OS credential store. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `strictDirectToolArguments` | Validate direct-tool inputs against their advertised schemas and recover one JSON string layer for object and array properties (default: false). |

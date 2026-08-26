@@ -99,23 +99,11 @@ function isUnauthorizedHttpError(error: unknown): boolean {
   );
 }
 
-function shouldFallbackToSse(
-  error: unknown,
-  definition: ServerDefinition,
-): boolean {
-  if (definition.protocolVersion === MODERN_PROTOCOL_VERSION) return false;
-  return (
-    error instanceof SdkHttpError && [404, 405, 406, 415].includes(error.status)
-  );
-}
-
 function resolveVersionNegotiation(
   definition: ServerDefinition,
-): VersionNegotiationOptions | undefined {
+): VersionNegotiationOptions {
   switch (definition.protocolVersion) {
     case undefined:
-    case "legacy":
-      return undefined;
     case "auto":
       return { mode: "auto" };
     case MODERN_PROTOCOL_VERSION:
@@ -968,17 +956,13 @@ export class McpServerManager {
     serverName: string,
     definition: ServerDefinition,
   ): Client {
-    // Resolve protocol version for capability negotiation (P0 Fix + T06)
-    let protocolVersion: string | undefined;
-    if (definition.protocolVersion === MODERN_PROTOCOL_VERSION) {
-      protocolVersion = MODERN_PROTOCOL_VERSION;
-    } else if (definition.protocolVersion === "legacy") {
-      protocolVersion = "legacy";
-    } else if (definition.protocolVersion === "auto") {
-      // Auto-negotiated; we don't know yet at client creation time
-      // Pass undefined — sampling will be included (legacy-safe)
-      protocolVersion = undefined;
-    }
+    // Resolve protocol version for capability negotiation (P0 Fix + T06).
+    // Auto-negotiated connections don't know the era yet at client creation
+    // time — pass undefined so sampling stays enabled.
+    const protocolVersion =
+      definition.protocolVersion === MODERN_PROTOCOL_VERSION
+        ? MODERN_PROTOCOL_VERSION
+        : undefined;
     const capabilities = this.buildClientCapabilities(protocolVersion);
     const versionNegotiation = resolveVersionNegotiation(definition);
     let client: Client;
@@ -986,7 +970,7 @@ export class McpServerManager {
       { name: `pi-mcp-${serverName}`, version: "1.0.0" },
       {
         jsonSchemaValidator: createJsonSchemaValidator(),
-        ...(versionNegotiation ? { versionNegotiation } : {}),
+        versionNegotiation,
         ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
         listChanged: {
           tools: {
@@ -1308,9 +1292,9 @@ export class McpServerManager {
     };
 
     // Connect the real client once. Retry Streamable HTTP only for an implicit
-    // OAuth challenge; use SSE only for definitive endpoint incompatibility.
+    // OAuth challenge.
     // Agent Plugins set httpTransport, and their declared transport is used without fallback.
-    let kind: "streamable-http" | "sse" =
+    const kind: "streamable-http" | "sse" =
       definition.httpTransport ?? "streamable-http";
     let invalidated = credentialsInvalidated;
     for (;;) {
@@ -1350,15 +1334,7 @@ export class McpServerManager {
         }
         throw result.error;
       }
-
-      if (
-        definition.httpTransport === undefined &&
-        kind === "streamable-http" &&
-        shouldFallbackToSse(result.error, definition)
-      ) {
-        kind = "sse";
-        continue;
-      }
+    
       throw result.error;
     }
   }

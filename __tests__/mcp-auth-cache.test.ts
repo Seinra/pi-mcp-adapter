@@ -134,7 +134,7 @@ describe("OAuth credential-entry cache — coherence", () => {
     expect(getTestAuthSecretStoreReadCount() - beforeAbsentRead).toBeGreaterThan(0);
   });
 
-  it("isolates nested mutations and bypasses status inspection", () => {
+  it("isolates nested mutations and shares the cache with status inspection", () => {
     saveAuthEntry("aliased", {
       tokens: { accessToken: "a" },
       clientInfo: { clientId: "c", redirectUris: ["https://a.example"] },
@@ -154,15 +154,16 @@ describe("OAuth credential-entry cache — coherence", () => {
     const before = getTestAuthSecretStoreReadCount();
     inspectAuthForUrl("aliased", SERVER_URL);
     inspectAuthForUrl("aliased", SERVER_URL);
-    expect(getTestAuthSecretStoreReadCount() - before).toBe(2);
+    // Status inspection reuses the ordinary read cache: one store read warms it.
+    expect(getTestAuthSecretStoreReadCount() - before).toBe(1);
 
     const beforeOrdinaryRead = getTestAuthSecretStoreReadCount();
     expect(getAuthEntry("aliased")).toBeDefined();
-    expect(getTestAuthSecretStoreReadCount() - beforeOrdinaryRead).toBe(1);
+    expect(getTestAuthSecretStoreReadCount() - beforeOrdinaryRead).toBe(0);
   });
 
 
-  it("keeps inspection uncached after an ordinary read warms the cache", () => {
+  it("reuses the ordinary-read cache during status inspection", () => {
     saveAuthEntry("inspected", { tokens: { accessToken: "a" } }, SERVER_URL);
     enableAuthEntryCache();
     resetAuthEntryCache();
@@ -171,7 +172,7 @@ describe("OAuth credential-entry cache — coherence", () => {
     const before = getTestAuthSecretStoreReadCount();
 
     expect(inspectAuthForUrl("inspected", SERVER_URL).status).toBe("present");
-    expect(getTestAuthSecretStoreReadCount() - before).toBe(1);
+    expect(getTestAuthSecretStoreReadCount() - before).toBe(0);
   });
 
   it("does not cache store failures and reconstructs chunked entries once", () => {

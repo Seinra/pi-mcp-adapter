@@ -44,6 +44,16 @@ describe("session recovery — Streamable HTTP wire path", () => {
       for await (const chunk of req) body += chunk;
       const message = JSON.parse(body) as { id?: string | number; method?: string };
 
+      if (message.method === "server/discover") {
+        // Conservative fallback evidence for auto version negotiation.
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32601, message: "Method not found" },
+        }));
+        return;
+      }
+
       if (message.method === "initialize") {
         res.writeHead(200, {
           "content-type": "application/json",
@@ -175,8 +185,19 @@ describe("session recovery — Streamable HTTP wire path", () => {
 
       let body = "";
       for await (const chunk of req) body += chunk;
-      const message = JSON.parse(body) as { id?: string | number; method?: string };
-      const requestSessionId = Array.isArray(req.headers["mcp-session-id"])
+          const message = JSON.parse(body) as { id?: string | number; method?: string };
+
+          if (message.method === "server/discover") {
+            // Conservative fallback evidence for auto version negotiation.
+            res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32601, message: "Method not found" },
+            }));
+            return;
+          }
+
+          const requestSessionId = Array.isArray(req.headers["mcp-session-id"])
         ? req.headers["mcp-session-id"][0]
         : req.headers["mcp-session-id"];
 

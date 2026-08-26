@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
+    
+### Breaking changes
+    
+- MCP legacy protocol mode removed: `protocolVersion` now accepts only `"auto"` (new default — SDK version negotiation probes `server/discover` and falls back conservatively to the classic initialize handshake) or a pinned `"2026-07-28"`. Configs that set `protocolVersion: "legacy"` must drop the field or use `"auto"`.
+- SSE transport fallback removed: Streamable HTTP failures now surface directly instead of silently retrying over SSE. `httpTransport` still pins an explicit transport for Agent Plugins.
+- Plaintext `tokens.json` one-time import removed: credentials are read from the OS credential store only. Keychain/Credential Manager users are unaffected; anyone still on a pre-2.x plaintext entry must re-authenticate once.
+- npx v1 cache cleanup dropped on startup; stale v1 cache files are simply ignored.
+    
 ### Added
 
 - Per-server MCP 2026-07-28 support: pinned modern connections omit the deprecated sampling capability, structured content and result metadata (`structuredContent`, `outputSchema`, `resultType`, `serverInfo`) surface through proxy and direct-tool results, resource templates map with pagination and SDK fallback, completions expose a capability-gated API on `McpServerManager`, and progress notifications use server-scoped token listeners bridged through the SDK's per-request `onprogress` callback.

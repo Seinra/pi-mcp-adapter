@@ -528,13 +528,12 @@ export interface ServerEntry {
  /** Treat env values as already resolved literals. Used for Agent Plugin env rules. */
  literalEnv?: boolean;
  /**
-  * MCP protocol era negotiation for this server. Defaults to `"legacy"`
-  * (byte-equivalent to pre-2026 behavior — no `versionNegotiation` is sent).
-  * `"auto"` offers the SDK's default 2026-07-28+ modern versions with
-  * legacy fallback; `"2026-07-28"` pins the connection to that revision
-  * with no fallback. `auto` and `2026-07-28` must be set explicitly.
+  * MCP protocol era negotiation for this server. Defaults to `"auto"`
+  * (SDK version negotiation probes `server/discover` at connect and falls
+  * back to the classic initialize handshake conservatively).
+  * `"2026-07-28"` pins the connection to that revision with no fallback.
   */
- protocolVersion?: "legacy" | "auto" | "2026-07-28";
+ protocolVersion?: "auto" | "2026-07-28";
  // Keep configuration visible without allowing connections or execution.
  disabled?: boolean;
 }
@@ -768,8 +767,8 @@ export interface DirectToolSpec {
  resourceUri?: string;
  uiResourceUri?: string;
  uiStreamMode?: UiStreamMode;
- /** MCP protocol version for this server (e.g., "legacy", "auto", "2026-07-28") */
- protocolVersion?: "legacy" | "auto" | "2026-07-28";
+ /** MCP protocol version for this server (e.g., "auto", "2026-07-28") */
+ protocolVersion?: "auto" | "2026-07-28";
 }
 
 export interface ServerProvenance {

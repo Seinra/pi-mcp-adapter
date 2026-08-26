@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   clearAllCredentials,
   formatOAuthCredentialStoreUnavailable,
+  getAuthBaseDir,
   getAuthEntry,
-  getAuthEntryFilePath,
   getAuthStorageOptions,
   getTestAuthSecretStoreEntries,
   inspectAuthForUrl,
@@ -68,7 +68,7 @@ describe("mcp-auth storage paths", () => {
     rmSync(authDir, { recursive: true, force: true });
   });
 
-  it("keeps arbitrary configured server names under safe hashed legacy import paths", () => {
+  it("keeps arbitrary configured server names out of plaintext files", () => {
     const names = ["Cloudflare Workers", "сервер", "../escape", "@scope/name", ""];
 
     for (const [index, name] of names.entries()) {
@@ -76,49 +76,17 @@ describe("mcp-auth storage paths", () => {
       saveAuthEntry(name, { tokens: { accessToken: token } }, "https://example.com/mcp");
 
       expect(getAuthEntry(name)?.tokens?.accessToken).toBe(token);
-      const filePath = getAuthEntryFilePath(name);
-      const rel = relative(authDir, filePath);
-      expect(rel.startsWith("..")).toBe(false);
-      expect(isAbsolute(rel)).toBe(false);
-      expect(rel).toMatch(/^sha256-[a-f0-9]{64}\/tokens\.json$/);
-      expect(existsSync(filePath)).toBe(false);
     }
 
+    // Credentials live in the secure store; no tokens.json may appear under
+    // the OAuth directory, including via path-traversal-shaped names.
+    const files = existsSync(authDir) ? readdirSync(authDir, { recursive: true }) : [];
+    expect(files.filter((file) => String(file).endsWith("tokens.json"))).toEqual([]);
     expect(existsSync(join(authDir, "..", "escape", "tokens.json"))).toBe(false);
   });
 
   it("rejects non-string names at the storage boundary", () => {
-    expect(() => getAuthEntryFilePath(undefined as unknown as string)).toThrow(/Invalid MCP server name/);
-  });
-
-  it("uses configured oauthDir as the legacy import source", () => {
-    delete process.env.MCP_OAUTH_DIR;
-    const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
-    const options = getAuthStorageOptions(".pi/oauth", project);
-    const filePath = getAuthEntryFilePath("configured", options);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify({ tokens: { accessToken: "legacy-token" }, serverUrl: "https://example.com/mcp" }), "utf-8");
-
-    expect(getAuthEntry("configured", options)?.tokens?.accessToken).toBe("legacy-token");
-    expect(filePath.startsWith(join(project, ".pi", "oauth"))).toBe(true);
-    expect(existsSync(filePath)).toBe(false);
-    expect(getAuthEntry("configured", options)?.tokens?.accessToken).toBe("legacy-token");
-    rmSync(project, { recursive: true, force: true });
-  });
-
-  it("does not migrate legacy credentials during status-only inspection", () => {
-    const filePath = getAuthEntryFilePath("status-only");
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify({
-      tokens: { accessToken: "legacy-token" },
-      serverUrl: "https://example.com/mcp",
-    }), "utf-8");
-
-    expect(inspectAuthForUrl("status-only", "https://example.com/mcp").status).toBe("present");
-    expect(existsSync(filePath)).toBe(true);
-
-    expect(getAuthEntry("status-only")?.tokens?.accessToken).toBe("legacy-token");
-    expect(existsSync(filePath)).toBe(false);
+    expect(() => saveAuthEntry(undefined as unknown as string, {})).toThrow(/Invalid MCP server name/);
   });
 
   it("does not use configured oauthDir values as secure-store namespaces", () => {
@@ -141,11 +109,8 @@ describe("mcp-auth storage paths", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
     const options = getAuthStorageOptions(".pi/oauth", project);
 
-    saveAuthEntry("env-override", { tokens: { accessToken: "token" } }, "https://example.com/mcp", options);
-
-    const filePath = getAuthEntryFilePath("env-override", options);
-    expect(filePath.startsWith(authDir)).toBe(true);
-    expect(filePath.startsWith(join(project, ".pi", "oauth"))).toBe(false);
+    expect(getAuthBaseDir(options)).toBe(authDir);
+    expect(getAuthBaseDir(options)).not.toBe(join(project, ".pi", "oauth"));
     rmSync(project, { recursive: true, force: true });
   });
 

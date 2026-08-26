@@ -44,10 +44,19 @@ describe("McpServerManager StreamableHTTP transport", () => {
           return;
         }
 
-        let body = "";
-        for await (const chunk of req) body += chunk;
-        const message = JSON.parse(body) as { id?: string | number; method?: string };
-        const result = message.method === "initialize"
+            let body = "";
+            for await (const chunk of req) body += chunk;
+            const message = JSON.parse(body) as { id?: string | number; method?: string };
+            if (message.method === "server/discover") {
+              // Conservative fallback evidence for auto version negotiation.
+              res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+                jsonrpc: "2.0",
+                id: message.id,
+                error: { code: -32601, message: "Method not found" },
+              }));
+              return;
+            }
+            const result = message.method === "initialize"
           ? {
               protocolVersion: "2025-06-18",
               capabilities: { tools: {}, resources: {} },
@@ -102,12 +111,22 @@ describe("McpServerManager StreamableHTTP transport", () => {
         return;
       }
 
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      const message = JSON.parse(body) as { id?: string | number; method?: string };
-      methods.push(message.method ?? "");
+          let body = "";
+          for await (const chunk of req) body += chunk;
+          const message = JSON.parse(body) as { id?: string | number; method?: string };
+          methods.push(message.method ?? "");
 
-      if (message.method === "initialize") {
+          if (message.method === "server/discover") {
+            // Conservative fallback evidence for auto version negotiation.
+            res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32601, message: "Method not found" },
+            }));
+            return;
+          }
+
+          if (message.method === "initialize") {
         initializeAttempts += 1;
         if (initializeAttempts === 1) {
           res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({
@@ -157,7 +176,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
     })).rejects.toThrow("endpoint is temporarily unavailable (HTTP 503)");
 
     expect(initializeAttempts).toBe(1);
-    expect(methods).not.toContain("server/discover");
+    expect(methods.filter(method => method === "server/discover")).toHaveLength(1);
   });
 
   it("preserves the transient availability diagnosis without retry", async () => {
@@ -168,14 +187,23 @@ describe("McpServerManager StreamableHTTP transport", () => {
         return;
       }
 
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      const message = JSON.parse(body) as { method?: string };
-      methods.push(message.method ?? "");
-      res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({
-        error: "temporarily_unavailable",
-        error_description: "Credential validation is temporarily unavailable",
-      }));
+          let body = "";
+          for await (const chunk of req) body += chunk;
+          const message = JSON.parse(body) as { method?: string; id?: string | number };
+          methods.push(message.method ?? "");
+          if (message.method === "server/discover") {
+            // Conservative fallback evidence for auto version negotiation.
+            res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32601, message: "Method not found" },
+            }));
+            return;
+          }
+          res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({
+            error: "temporarily_unavailable",
+            error_description: "Credential validation is temporarily unavailable",
+          }));
     });
     servers.push(server);
 
@@ -193,7 +221,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
 
     expect(error.message).toContain("endpoint is temporarily unavailable (HTTP 503)");
     expect(error.message).not.toContain("does not appear to speak MCP");
-    expect(methods).toEqual(["initialize"]);
+    expect(methods).toEqual(["server/discover", "initialize"]);
   });
 
   it("fails closed for explicit OAuth when secure storage is unavailable", async () => {
@@ -238,7 +266,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
     })).rejects.toThrow();
   });
 
-  it("resolves command-backed HTTP secrets without falling back to SSE on GET 405", async () => {
+  it("resolves command-backed HTTP secrets over streamable-http only, with no SSE fallback transport", async () => {
     const requests: string[] = [];
     const server = http.createServer(async (req, res) => {
       requests.push(`${req.method} ${req.url}`);
@@ -261,6 +289,16 @@ describe("McpServerManager StreamableHTTP transport", () => {
       let body = "";
       for await (const chunk of req) body += chunk;
       const message = JSON.parse(body) as { id?: string | number; method?: string };
+
+      if (message.method === "server/discover") {
+        // Conservative fallback evidence for auto version negotiation.
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32601, message: "Method not found" },
+        }));
+        return;
+      }
 
       if (message.method === "initialize") {
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
@@ -327,10 +365,13 @@ describe("McpServerManager StreamableHTTP transport", () => {
       expect(connection.status).toBe("connected");
       expect(connection.tools).toEqual([]);
       expect(connection.resources).toEqual([]);
+      // Post-cut semantics: the POST-based Streamable HTTP session is the only
+      // transport. The optional GET stream is probed at most once on /mcp and
+      // no legacy SSE endpoint (/sse, /messages) or second transport attempt
+      // ever happens — even though GET answers 405.
       expect(requests).toContain("GET /mcp");
-      // The SDK probes the optional GET stream once, then keeps the successful
-      // POST-based session without an SSE fallback or retry storm.
       expect(requests.filter(request => request === "GET /mcp")).toHaveLength(1);
+      expect(requests.every(request => request.endsWith("/mcp"))).toBe(true);
 
       await manager.close("post-only");
       const traceLines = (await readFile(join(traceDirectory, "mcp.jsonl"), "utf8"))

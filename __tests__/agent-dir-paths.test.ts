@@ -64,8 +64,8 @@ describe("Pi agent dir paths", () => {
     const { getAgentDir } = await import("../agent-dir.ts");
     const { getPiGlobalConfigPath } = await import("../config.ts");
     const { getMetadataCachePath } = await import("../metadata-cache.ts");
-    const { getOnboardingStatePath } = await import("../onboarding-state.ts");
-    const { getAuthEntryFilePath, saveAuthEntry } = await import(
+        const { getOnboardingStatePath } = await import("../onboarding-state.ts");
+    const { getAuthBaseDir, saveAuthEntry } = await import(
       "../mcp-auth.ts"
     );
 
@@ -81,18 +81,10 @@ describe("Pi agent dir paths", () => {
       { tokens: { accessToken: "token" } },
       "https://example.com/mcp",
     );
-    expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
-    expect(
-      getAuthEntryFilePath("demo").startsWith(join(agentDir, "mcp-oauth")),
-    ).toBe(true);
+    expect(getAuthBaseDir()).toBe(join(agentDir, "mcp-oauth"));
     expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(
       false,
     );
-    expect(
-      existsSync(
-        join(home, ".pi", "agent", "mcp-oauth", "demo", "tokens.json"),
-      ),
-    ).toBe(false);
   });
 
   it("expands tilde in PI_CODING_AGENT_DIR", async () => {
@@ -138,20 +130,8 @@ describe("Pi agent dir paths", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.MCP_OAUTH_DIR = oauthDir;
 
-    const { getAuthEntryFilePath, saveAuthEntry } = await import(
-      "../mcp-auth.ts"
-    );
+    const { getAuthBaseDir } = await import("../mcp-auth.ts");
 
-    saveAuthEntry(
-      "demo",
-      { tokens: { accessToken: "token" } },
-      "https://example.com/mcp",
-    );
-    expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
-    expect(getAuthEntryFilePath("demo").startsWith(oauthDir)).toBe(true);
-    expect(existsSync(join(oauthDir, "demo", "tokens.json"))).toBe(false);
-    expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(
-      false,
-    );
+    expect(getAuthBaseDir()).toBe(oauthDir);
   });
 });

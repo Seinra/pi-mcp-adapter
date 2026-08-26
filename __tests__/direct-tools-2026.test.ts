@@ -34,7 +34,7 @@ function createConnectedClient(
   };
 }
 
-function createSpec(protocolVersion?: "legacy" | "auto" | "2026-07-28") {
+function createSpec(protocolVersion?: "auto" | "2026-07-28") {
   return {
     serverName: "demo",
     originalName: "tool",

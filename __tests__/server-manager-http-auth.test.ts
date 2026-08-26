@@ -295,22 +295,23 @@ describe("McpServerManager HTTP bearer auth", () => {
 
   it("passes the per-request header command fetch to Streamable HTTP and SSE", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
-    mocks.connectErrors.push(new SdkHttpError(
-      SdkErrorCode.ClientHttpNotImplemented,
-      "POST is not supported",
-      { status: 405 },
-    ));
 
     const manager = new McpServerManager();
-    await manager.connect("signed", {
+    await manager.connect("signed-http", {
       url: "https://example.test/mcp",
       requestHeadersCommand: { command: process.execPath, args: ["--version"] },
+      httpTransport: "streamable-http",
     });
-
+    await manager.connect("signed-sse", {
+      url: "https://example.test/mcp",
+      requestHeadersCommand: { command: process.execPath, args: ["--version"] },
+      httpTransport: "sse",
+    });
+    
     expect(mocks.httpTransports).toHaveLength(1);
     expect(mocks.sseTransports).toHaveLength(1);
     expect(mocks.httpTransports[0].options.fetch).toBeTypeOf("function");
-    expect(mocks.sseTransports[0].options.fetch).toBe(mocks.httpTransports[0].options.fetch);
+    expect(mocks.sseTransports[0].options.fetch).toBeTypeOf("function");
   });
 
   it("preserves OAuth redirect URI, client metadata, and issuer opt-out for HTTP transports", async () => {
@@ -352,23 +353,21 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(mocks.httpTransports[0].close).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to SSE only for a definitive Streamable HTTP endpoint mismatch", async () => {
+  it("surfaces Streamable HTTP endpoint mismatches directly without an SSE fallback", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     mocks.connectErrors.push(new SdkHttpError(
       SdkErrorCode.ClientHttpNotImplemented,
       "POST is not supported",
       { status: 405 },
     ));
-
+    
     const manager = new McpServerManager();
-    const connection = await manager.connect("legacy-sse", {
+    await expect(manager.connect("mismatch", {
       url: "https://example.test/mcp",
-    });
-
-    expect(connection.status).toBe("connected");
+    })).rejects.toThrow("POST is not supported");
     expect(mocks.httpTransports).toHaveLength(1);
-    expect(mocks.sseTransports).toHaveLength(1);
-    expect(mocks.clients).toHaveLength(2);
+    expect(mocks.sseTransports).toHaveLength(0);
+    expect(mocks.clients).toHaveLength(1);
   });
 
   it.each([401, 403, 500])("does not fall back to SSE for HTTP %s", async status => {
@@ -410,6 +409,9 @@ describe("McpServerManager HTTP bearer auth", () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
 
+    await manager.connect("unset", {
+      url: "https://example.test/mcp",
+    });
     await manager.connect("auto", {
       url: "https://example.test/mcp",
       protocolVersion: "auto",
@@ -420,7 +422,8 @@ describe("McpServerManager HTTP bearer auth", () => {
     });
 
     expect(mocks.clients[0].options.versionNegotiation).toEqual({ mode: "auto" });
-    expect(mocks.clients[1].options.versionNegotiation).toEqual({ mode: { pin: "2026-07-28" } });
+    expect(mocks.clients[1].options.versionNegotiation).toEqual({ mode: "auto" });
+    expect(mocks.clients[2].options.versionNegotiation).toEqual({ mode: { pin: "2026-07-28" } });
   });
 
   it("applies the configured timeout to the HTTP connection", async () => {

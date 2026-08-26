@@ -1,5 +1,5 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
@@ -482,27 +482,7 @@ function toNpxCache(value: unknown): NpxCache | null {
   return { version: CACHE_VERSION, entries };
 }
 
-function clearLegacyCache(): boolean {
-  const cachePath = getNpxCachePath();
-  const raw = asRecord(readNpxCachePayload(cachePath));
-  if (raw?.version !== 1) return false;
-  try {
-    unlinkSync(cachePath);
-  } catch {
-    try {
-      writeFileSync(cachePath, "", "utf-8");
-    } catch {
-      // Cache cleanup is best effort; resolution must still proceed.
-    }
-  }
-  return true;
-}
-
-clearLegacyCache();
-
 function loadCache(): NpxCache | null {
-  if (clearLegacyCache()) return null;
-
   return toNpxCache(readNpxCachePayload(getNpxCachePath()));
 }
 

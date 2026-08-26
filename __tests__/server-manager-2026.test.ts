@@ -84,20 +84,6 @@ describe("McpServerManager 2026-07-28 features", () => {
       expect(caps).toEqual({});
     });
 
-    it("includes sampling when protocolVersion is 'legacy' and sampling config exists", () => {
-      const manager = new McpServerManager();
-      manager.setSamplingConfig({
-        autoApprove: true,
-        modelRegistry: {} as any,
-        getCurrentModel: () => undefined,
-        getSignal: () => undefined,
-      });
-
-      const caps = manager.buildClientCapabilities("legacy");
-      expect(caps).toHaveProperty("sampling");
-      expect(caps.sampling).toEqual({});
-    });
-
     it("includes sampling when protocolVersion is undefined and sampling config exists", () => {
       const manager = new McpServerManager();
       manager.setSamplingConfig({
@@ -115,7 +101,7 @@ describe("McpServerManager 2026-07-28 features", () => {
     it("omits sampling when no sampling config exists regardless of protocolVersion", () => {
       const manager = new McpServerManager();
 
-      const caps = manager.buildClientCapabilities("legacy");
+      const caps = manager.buildClientCapabilities(undefined);
       expect(caps).not.toHaveProperty("sampling");
     });
 

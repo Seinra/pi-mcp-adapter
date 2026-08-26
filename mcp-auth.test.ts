@@ -4,8 +4,8 @@
 
 import { describe, it, before, after } from "node:test"
 import assert from "node:assert"
-import { mkdirSync, rmSync, existsSync, writeFileSync } from "fs"
-import { dirname, join } from "path"
+import { mkdirSync, rmSync, existsSync } from "fs"
+import { join } from "path"
 import { tmpdir } from "os"
 import { randomBytes } from "crypto"
 
@@ -15,7 +15,6 @@ process.env.MCP_OAUTH_DIR = TEST_DIR
 
 import {
   getAuthEntry,
-  getAuthEntryFilePath,
   getAuthForUrl,
   saveAuthEntry,
   removeAuthEntry,
@@ -143,34 +142,6 @@ describe("mcp-auth", () => {
     it("should return undefined for non-existent entry", () => {
       const entry = getAuthEntry("non-existent")
       assert.strictEqual(entry, undefined)
-    })
-
-    it("should import legacy plaintext entries and remove the file", () => {
-      const filePath = getAuthEntryFilePath("legacy-import")
-      mkdirSync(dirname(filePath), { recursive: true })
-      writeFileSync(filePath, JSON.stringify({
-        tokens: { accessToken: "legacy-token" },
-        serverUrl: "https://api.example.com",
-      }), "utf-8")
-
-      const entry = getAuthEntry("legacy-import")
-      assert.strictEqual(entry?.tokens?.accessToken, "legacy-token")
-      assert.strictEqual(existsSync(filePath), false)
-      assert.strictEqual(getAuthEntry("legacy-import")?.tokens?.accessToken, "legacy-token")
-    })
-
-    it("should reject malformed legacy plaintext entries", () => {
-      const filePath = getAuthEntryFilePath("legacy-invalid")
-      mkdirSync(dirname(filePath), { recursive: true })
-      writeFileSync(filePath, JSON.stringify({
-        tokens: { refreshToken: "missing-access-token" },
-      }), "utf-8")
-
-      assert.throws(
-        () => getAuthEntry("legacy-invalid"),
-        /Failed to parse OAuth credentials.*invalid credential shape/,
-      )
-      assert.strictEqual(existsSync(filePath), true)
     })
 
     it("should fail closed when the secure credential store is unavailable", () => {

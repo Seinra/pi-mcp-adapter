@@ -28,16 +28,10 @@ describe("MCP endpoint shape probe", () => {
   });
 
   it("classifies a GraphQL-style JSON error as not MCP", async () => {
-    mockFetch(
-      new Response(JSON.stringify({ errors: [{ message: "Cannot query field" }] }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      }),
-      new Response(JSON.stringify({ errors: [{ message: "Cannot query field" }] }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockFetch(new Response(JSON.stringify({ errors: [{ message: "Cannot query field" }] }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    }));
 
     await expect(probeMcpEndpoint("https://example.test/graphql")).resolves.toMatchObject({
       isMcp: false,
@@ -81,38 +75,18 @@ describe("MCP endpoint shape probe", () => {
   });
 
   it("reports an unauthenticated response without claiming the URL is not MCP", async () => {
-    mockFetch(
-      new Response("Unauthorized", { status: 401, headers: { "content-type": "application/json" } }),
-      new Response("Unauthorized", { status: 401, headers: { "content-type": "application/json" } }),
-    );
-
+    mockFetch(new Response("Unauthorized", { status: 401, headers: { "content-type": "application/json" } }));
+    
     const result = await probeMcpEndpoint("https://example.test/mcp");
-
+    
     expect(result).toMatchObject({
       isMcp: false,
       classification: "endpoint returned application/json (401) — authentication may be required; MCP endpoint shape could not be determined",
     });
     expect(result.classification).not.toContain("does not appear to speak MCP");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
-
-  it("keeps an earlier unauthenticated probe classification when fallbacks are inconclusive", async () => {
-    mockFetch(
-      new Response("Unauthorized", { status: 401, headers: { "content-type": "application/json" } }),
-      new Response("Not Found", { status: 404, headers: { "content-type": "text/plain" } }),
-      new Response("Method Not Allowed", { status: 405, headers: { "content-type": "text/plain" } }),
-    );
-
-    const result = await probeMcpEndpoint("https://example.test/mcp");
-
-    expect(result).toMatchObject({
-      isMcp: false,
-      classification: "endpoint returned application/json (401) — authentication may be required; MCP endpoint shape could not be determined",
-    });
-    expect(result.classification).not.toContain("does not appear to speak MCP");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
+    
   it("recognizes a modern stateless server/discover response", async () => {
     mockFetch(new Response(JSON.stringify({
       jsonrpc: "2.0", id: 1, result: { protocolVersion: "2026-07-28" },
@@ -149,67 +123,42 @@ describe("MCP endpoint shape probe", () => {
     });
   });
 
-  it("falls back to legacy when server/discover returns method not found", async () => {
-    mockFetch(
-      new Response(JSON.stringify({
-        jsonrpc: "2.0", id: 1, error: { code: -32601, message: "Method not found" },
-      }), { status: 200, headers: { "content-type": "application/json" } }),
-      new Response(JSON.stringify({
-        jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" },
-      }), { status: 200, headers: { "content-type": "application/json" } }),
-    );
-
+  it("classifies a non-discover JSON-RPC error response as not MCP", async () => {
+    mockFetch(new Response(JSON.stringify({
+      jsonrpc: "2.0", id: 1, error: { code: -32601, message: "Method not found" },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    
     await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toMatchObject({
-      isMcp: true,
-      classification: "endpoint responded with a JSON-RPC 2.0 envelope",
+      isMcp: false,
+      classification: expect.stringContaining("application/json (200)"),
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
-
-  it("falls back to legacy when server/discover returns a different protocol version", async () => {
-    mockFetch(
-      new Response(JSON.stringify({
-        jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" },
-      }), { status: 200, headers: { "content-type": "application/json" } }),
-      new Response(JSON.stringify({
-        jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" },
-      }), { status: 200, headers: { "content-type": "application/json" } }),
-    );
-
+    
+  it("classifies a different protocol version as not MCP", async () => {
+    mockFetch(new Response(JSON.stringify({
+      jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    
     await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toMatchObject({
-      isMcp: true,
-      classification: "endpoint responded with a JSON-RPC 2.0 envelope",
+      isMcp: false,
+      classification: expect.stringContaining("application/json (200)"),
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
-
-  it("recognizes an SSE response after the modern probe gets a legacy-style 400", async () => {
-    mockFetch(
-      new Response("Method not supported", { status: 400 }),
-      new Response("event: message\ndata: {}\n\n", {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      }),
-    );
-
-    await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toMatchObject({ isMcp: true });
+    
+  it("classifies a legacy-style 400 as not MCP without retrying", async () => {
+    mockFetch(new Response("Method not supported", { status: 400 }));
+    
+    await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toMatchObject({ isMcp: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
-
-  it("retries GET after a POST 405", async () => {
-    mockFetch(
-      new Response("Method Not Allowed", { status: 405 }),
-      new Response("Method Not Allowed", { status: 405 }),
-      new Response("event: message\ndata: {}\n\n", {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      }),
-    );
-
-    await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toMatchObject({ isMcp: true });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    
+  it("classifies a POST 405 as not MCP without a GET retry", async () => {
+    mockFetch(new Response("Method Not Allowed", { status: 405 }));
+    
+    await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toMatchObject({ isMcp: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
-    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
-    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ headers: { Accept: "text/event-stream" } });
-    expect(fetchMock.mock.calls[2]?.[1]?.signal).not.toBe(fetchMock.mock.calls[1]?.[1]?.signal);
   });
 });

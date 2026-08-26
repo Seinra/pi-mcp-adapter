@@ -29,6 +29,7 @@ describe("runMcpScript", () => {
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn(),
+      events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
     } as any);
 
@@ -47,6 +48,7 @@ describe("runMcpScript", () => {
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn(),
+      events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
     } as any);
 
@@ -176,6 +178,31 @@ describe("runMcpScript", () => {
           code: "tool_not_found",
           message: "Tool not found: fixture_ech",
           suggestions: ["fixture_echo"],
+        },
+      },
+    });
+  });
+
+  it("keeps active failed-backoff tools out of script describe results", async () => {
+    const backoffState = {
+      ...state,
+      manager: { getConnection: vi.fn(() => undefined) },
+      failureTracker: new Map([["fixture", Date.now()]]),
+    } as unknown as McpExtensionState;
+
+    const result = await runMcpScript(
+      backoffState,
+      'return { search: await tools.search({ query: "fixture" }), describe: await tools.describe({ path: "fixture_echo" }) };',
+    );
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
+      search: { items: [], total: 0, hasMore: false, nextOffset: null },
+      describe: {
+        path: "fixture_echo",
+        error: {
+          code: "tool_not_found",
+          message: "Tool not found: fixture_echo",
+          suggestions: [],
         },
       },
     });

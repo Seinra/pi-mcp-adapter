@@ -109,29 +109,29 @@ export function saveMetadataCache(cache: MetadataCache): void {
   renameSync(tmpPath, cachePath);
 }
 
-export function computeServerHash(definition: ServerEntry): string {
+export function computeServerHash(definition: ServerEntry, environment: NodeJS.ProcessEnv = process.env): string {
   // Hash only fields that affect server identity and tool/resource output.
   // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
   // that don't change which tools a server exposes.
   const identity: Record<string, unknown> = {
     command: definition.command,
     args: definition.args,
-    socket: resolveConfigPath(definition.socket),
-    env: interpolateEnvRecord(definition.env),
-    cwd: resolveConfigPath(definition.cwd),
-    url: resolveServerUrl(definition),
-    headers: interpolateEnvRecord(definition.headers),
+    socket: resolveConfigPath(definition.socket, environment),
+    env: interpolateEnvRecord(definition.env, environment),
+    cwd: resolveConfigPath(definition.cwd, environment),
+    url: resolveServerUrl(definition, environment),
+    headers: interpolateEnvRecord(definition.headers, environment),
     requestHeadersCommand: definition.requestHeadersCommand
       ? {
-          command: interpolateEnvVars(definition.requestHeadersCommand.command),
-          args: definition.requestHeadersCommand.args?.map(interpolateEnvVars),
-          env: interpolateEnvRecord(definition.requestHeadersCommand.env),
+          command: interpolateEnvVars(definition.requestHeadersCommand.command, environment),
+          args: definition.requestHeadersCommand.args?.map((argument) => interpolateEnvVars(argument, environment)),
+          env: interpolateEnvRecord(definition.requestHeadersCommand.env, environment),
           timeoutMs: definition.requestHeadersCommand.timeoutMs,
         }
       : undefined,
     auth: definition.auth,
     protocolVersion: definition.protocolVersion,
-    bearerToken: resolveBearerToken(definition),
+    bearerToken: resolveBearerToken(definition, environment),
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
     includeTools: definition.includeTools,
@@ -145,24 +145,39 @@ export function isServerCacheValid(
   entry: ServerCacheEntry,
   definition: ServerEntry,
   maxAgeMs: number = CACHE_MAX_AGE_MS,
+  environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
   let configHash: string;
   try {
-    configHash = computeServerHash(definition);
+    configHash = computeServerHash(definition, environment);
   } catch {
     return false;
   }
   if (!entry || entry.configHash !== configHash) return false;
   if (!entry.cachedAt || typeof entry.cachedAt !== "number") return false;
 
-  // Honor per-tool CacheableResult TTLs: the entry expires at the tightest
-  // declared ttlMs, capped by (never extending) the caller's max age.
-  const declaredTtls = (entry.tools ?? [])
-    .map((tool) => tool.ttlMs)
-    .filter(
-      (ttl): ttl is number =>
-        typeof ttl === "number" && Number.isFinite(ttl) && ttl >= 0,
-    );
+  // Honor CacheableResult TTLs (MCP 2026-07-28) from BOTH surfaces: the
+  // server-level list hint stored on the entry and per-tool stamps captured
+  // per page. The entry expires at the tightest declared ttl, capped by
+  // (never extending) the caller's max age. A declared ttl of 0 means "never
+  // serve from cache".
+  const declaredTtls: number[] = [];
+  if (
+    typeof entry.ttlMs === "number" &&
+    Number.isSafeInteger(entry.ttlMs) &&
+    entry.ttlMs >= 0
+  ) {
+    declaredTtls.push(entry.ttlMs);
+  }
+  for (const tool of entry.tools ?? []) {
+    if (
+      typeof tool.ttlMs === "number" &&
+      Number.isFinite(tool.ttlMs) &&
+      tool.ttlMs >= 0
+    ) {
+      declaredTtls.push(tool.ttlMs);
+    }
+  }
   const ageMs = Date.now() - entry.cachedAt;
   if (declaredTtls.length > 0) {
     // reduce instead of Math.min(...spread): huge tool arrays would exceed
@@ -173,12 +188,13 @@ export function isServerCacheValid(
     );
     const effectiveMaxAge =
       maxAgeMs > 0 ? Math.min(maxAgeMs, tightestTtl) : tightestTtl;
+    // A declared ttl of 0 never serves from cache, at any age.
+    if (effectiveMaxAge <= 0) return false;
     return ageMs < effectiveMaxAge;
   }
 
   // Sentinel asymmetry (intentional): maxAgeMs <= 0 means "skip this default
-  // age ceiling" on the no-ttl path, but a declared tool ttl still applies in
-  // that case via effectiveMaxAge above (see ttl pinning tests).
+  // age ceiling" when no ttl is declared anywhere on the entry or its tools.
   if (maxAgeMs > 0 && ageMs > maxAgeMs) return false;
   return true;
 }

@@ -10,12 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Per-server MCP 2026-07-28 support: pinned modern connections omit the deprecated sampling capability, structured content and result metadata (`structuredContent`, `outputSchema`, `resultType`, `serverInfo`) surface through proxy and direct-tool results, resource templates map with pagination and SDK fallback, completions expose a capability-gated API on `McpServerManager`, and progress notifications use server-scoped token listeners bridged through the SDK's per-request `onprogress` callback.
-- Cached tool metadata honors server-advertised `ttlMs`/`cacheScope` hints: an entry expires at its fetch time plus the tightest declared TTL instead of serving stale catalogs until the default max age.
-- Added a pure `mcp:` reference resolver API for consumers that validate adapter tool names from explicit config and cache inputs. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for PR #420.
+- Cached tool metadata honors server-advertised `ttlMs`/`cacheScope` hints: an entry expires at its fetch time plus the tightest declared TTL (result-level list hints or per-tool stamps) instead of serving stale catalogs until the default max age.
 
 ### Fixed
 
 - HTTP client connection now reports an invalid server URL cleanly instead of leaking a raw `TypeError` when a configured URL fails parsing.
+
+## [2.28.0] - 2026-08-26
+
+### Highlights
+- MCP connections are less fragile when servers fail, recover, move slowly, or refresh their catalogs.
+- Direct MCP tools are safer to expose, with stricter input checks and bounded result details when hosts opt in.
+- Other Pi extensions can register MCP servers at runtime without sharing module state.
+- Proxy calls now show live server progress in the interactive UI.
+- Package installs and public helper imports are easier to use from downstream hosts.
+
+### Added
+- Persistent metadata cache entries now honor server `ttlMs` hints without extending the default max age. Thanks to [@Seinra](https://github.com/Seinra) for #431.
+- Proxy tool calls now forward server progress notifications to the interactive UI. Thanks to [@Seinra](https://github.com/Seinra) for PR #440 and for mapping the area in #431.
+- Added a pure `mcp:` reference resolver API for consumers that validate adapter tool names from explicit config and cache inputs. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for PR #420.
+- Direct tools can opt into strict advertised-schema validation with one-layer JSON recovery for object and array properties. Thanks to [@4ndr3wxh1ll](https://github.com/4ndr3wxh1ll) for PR #430.
+- Direct tools can opt into guarded raw MCP result details, retaining bounded structured fields while summarizing oversized values.
+- Embedding hosts can import the configuration loader and metadata cache helpers from public package subpaths, and can validate cached metadata against an explicit private process environment.
+
+### Fixed
+- Runtime MCP registration now works across separately loaded Pi extensions through a versioned shared event contract. Thanks to [@fmoda3](https://github.com/fmoda3) for #443.
+- Stdio MCP startup errors now identify a configured missing or non-directory `cwd` instead of blaming the executable. Thanks to [@SoyElf](https://github.com/SoyElf) for #442.
+- Package installs with `--omit=dev` no longer run the public helper build during `prepare`; Git installs and package tarballs still include the built public exports. Thanks to [@KripaMishra](https://github.com/KripaMishra) for #441.
+- MCP gateway descriptions now stay stable across metadata-only refreshes and keep live counts behind `mcp({})`. Thanks to [@voidfreud](https://github.com/voidfreud) for PR #432.
+- Failed MCP servers in active backoff no longer remain advertised through cached direct tools, gateway list/search/describe results, or status tool counts. Thanks to [@voidfreud](https://github.com/voidfreud) for PR #434.
 - OAuth token invalidation now preserves credentials replaced by another Pi process instead of letting a stale refresh delete newly authorized shared credentials. Thanks to [@mjlbach](https://github.com/mjlbach) for PR #422.
 - Failed first-time MCP initialization no longer leaves the session permanently stuck with only `MCP not initialized`; the gateway keeps the failure reason and retries initialization on the next `mcp(...)` call. Thanks to [@hara-seihun](https://github.com/hara-seihun) for #428.
 - HTTP 202 and unauthenticated HTTP 401 endpoint probes now report ambiguous endpoint shape instead of claiming the URL is not MCP. Thanks to [@jayshah5696](https://github.com/jayshah5696) for #415.

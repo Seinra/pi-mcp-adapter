@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { McpServerManager } from "../server-manager.ts";
 import {
   computeServerHash,
   isServerCacheValid,
+  loadMetadataCache,
   serializeTools,
 } from "../metadata-cache.ts";
-import type { CachedTool, ServerEntry, ServerCacheEntry } from "../types.ts";
+import { updateMetadataCache } from "../init.ts";
+import type { CachedTool, ServerCacheEntry, ServerEntry } from "../types.ts";
 
 const BASE_TIME = 1_700_000_000_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -118,6 +124,24 @@ describe("isServerCacheValid ttlMs honoring", () => {
     expect(isServerCacheValid(entry, definition)).toBe(true);
   });
 
+  it("honors an entry-level ttlMs hint alongside per-tool declarations", () => {
+    const definition = makeDefinition();
+    const entry = makeEntry(definition, 0, [tool("search")]);
+    entry.ttlMs = 1_000;
+
+    vi.setSystemTime(BASE_TIME + 500);
+    expect(isServerCacheValid(entry, definition)).toBe(true);
+
+    vi.setSystemTime(BASE_TIME + 1_500);
+    expect(isServerCacheValid(entry, definition)).toBe(false);
+
+    // The tightest declaration wins across entry and tools.
+    entry.ttlMs = 60_000;
+    entry.tools = [tool("fast", 1_000)];
+    vi.setSystemTime(BASE_TIME + 1_500);
+    expect(isServerCacheValid(entry, definition)).toBe(false);
+  });
+
   it("preserves the exact default max-age behavior when no ttlMs is declared", () => {
     const definition = makeDefinition();
 
@@ -222,8 +246,7 @@ describe("CacheableResult write-side pipeline", () => {
 });
 
 describe("fetchAllTools CacheableResult capture", () => {
-  it("stamps page-level ttlMs/cacheScope on each tool of that page", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
+  it("returns {tools, hints} and stamps page-level ttlMs/cacheScope on each tool of that page", async () => {
     const manager = new McpServerManager();
 
     const client = {
@@ -242,20 +265,22 @@ describe("fetchAllTools CacheableResult capture", () => {
         }),
     };
 
-    const tools = await (manager as any).fetchAllTools(client, undefined);
+    const result = await (manager as any).fetchAllTools(client, undefined);
 
-    expect(tools).toHaveLength(2);
-    expect(tools[0].name).toBe("fast");
-    expect(tools[0].ttlMs).toBe(5_000);
-    expect(tools[0].cacheScope).toBe("private");
-    expect(tools[1].name).toBe("slow");
-    expect(tools[1].ttlMs).toBe(60_000);
-    expect(tools[1].cacheScope).toBeUndefined();
+    expect(result.tools).toHaveLength(2);
+    // First page's declaration becomes the connection/entry-level hint (#431)...
+    expect(result.hints).toEqual({ ttlMs: 5_000, cacheScope: "private" });
+    // ...and every page stamps its own declaration onto that page's tools.
+    expect(result.tools[0]).toEqual({
+      name: "fast",
+      ttlMs: 5_000,
+      cacheScope: "private",
+    });
+    expect(result.tools[1]).toEqual({ name: "slow", ttlMs: 60_000 });
     expect(client.listTools).toHaveBeenCalledTimes(2);
   });
 
-  it("leaves tools unstamped when the page declares no usable ttlMs", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
+  it("leaves tools unstamped and omits hints when pages declare no usable ttlMs", async () => {
     const manager = new McpServerManager();
 
     const client = {
@@ -266,10 +291,51 @@ describe("fetchAllTools CacheableResult capture", () => {
       }),
     };
 
-    const tools = await (manager as any).fetchAllTools(client, undefined);
+    const result = await (manager as any).fetchAllTools(client, undefined);
 
-    expect(tools[0].name).toBe("plain");
-    expect(tools[0].ttlMs).toBeUndefined();
-    expect(tools[0].cacheScope).toBeUndefined();
+    expect(result.hints).toBeUndefined();
+    expect(result.tools).toEqual([{ name: "plain" }]);
+  });
+
+  it("keeps list hints at the result and cache-entry levels while stamping page tools", async () => {
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-cache-ttl-"));
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    try {
+      const manager = new McpServerManager();
+      const result = await (manager as any).fetchAllTools({
+        listTools: vi.fn().mockResolvedValue({
+          tools: [{ name: "search" }],
+          ttlMs: 5_000,
+          cacheScope: "private",
+        }),
+      });
+
+      expect(result.hints).toEqual({ ttlMs: 5_000, cacheScope: "private" });
+      expect(result.tools[0]).toMatchObject({ ttlMs: 5_000, cacheScope: "private" });
+
+      updateMetadataCache(
+        {
+          config: { mcpServers: { demo: makeDefinition() } },
+          manager: {
+            getConnection: () => ({
+              status: "connected",
+              tools: result.tools,
+              resources: [],
+              prompts: [],
+              toolListHints: result.hints,
+            }),
+          },
+        } as any,
+        "demo",
+      );
+
+      const cached = loadMetadataCache()?.servers.demo;
+      expect(cached).toMatchObject({ ttlMs: 5_000, cacheScope: "private" });
+    } finally {
+      if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+      rmSync(agentDir, { recursive: true, force: true });
+    }
   });
 });

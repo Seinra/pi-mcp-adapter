@@ -8,7 +8,7 @@ import type {
  Transport as McpTransport,
 } from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import type { UiStreamMode } from "./ui-stream-types.ts";
+import type { UiStreamMode, UiStreamSummary } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
 
 export type Transport = McpTransport;
@@ -88,6 +88,15 @@ export interface McpProgressNotification {
  progress: number;
  total?: number;
  message?: string;
+}
+
+/**
+ * Minimal event-bus surface the status publisher needs. Lives here (leaf
+ * module) so `state.ts` can reference it without importing `mcp-status.ts`,
+ * which imports the state type back — an import cycle at type level.
+ */
+export interface McpStatusEventBus {
+  emit(channel: string, data: unknown): void;
 }
 
 // Import sources for config
@@ -205,6 +214,30 @@ export interface UiHostContext {
 }
 
 export type UiDisplayMode = "inline" | "fullscreen" | "pip";
+
+/**
+ * Live handle to a started UI tool session. Lives here (leaf module) so
+ * `state.ts` can reference it without importing `ui-server.ts`, which
+ * imports the state type back — an import cycle at type level.
+ */
+export interface UiServerHandle {
+  url: string;
+  port: number;
+  sessionToken: string;
+  serverName: string;
+  toolName: string;
+  viewer?: "browser" | "glimpse" | "suppressed";
+  windowOpen?: boolean;
+  close: (reason?: string) => void;
+  sendToolInput: (args: Record<string, unknown>) => void;
+  sendToolResult: (result: CallToolResult) => void;
+  sendResultPatch: (result: CallToolResult) => void;
+  sendToolCancelled: (reason: string) => void;
+  sendHostContext: (context: UiHostContext) => void;
+  /** Get accumulated messages from this session */
+  getSessionMessages: () => UiSessionMessages;
+  getStreamSummary: () => UiStreamSummary | undefined;
+}
 
 // Re-export stream types from the shared lightweight module.
 // This allows the example package to import stream schemas without pulling the full types.ts dependency graph.
@@ -581,6 +614,16 @@ export interface McpSettings {
  idleTimeout?: number; // minutes, default 10, 0 to disable
  requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
  directTools?: boolean;
+ /**
+  * Validate direct-tool inputs against the advertised schema after recovering
+  * one JSON string layer for object and array properties. Defaults to false.
+  */
+ strictDirectToolArguments?: boolean;
+ /**
+  * Include the byte-bounded raw MCP result in direct-tool details. The default
+  * `lean` mode keeps the existing small details object.
+  */
+ directToolResultDetails?: "lean" | "bounded";
  /** Show the advisory when 75 or more direct tools resolve. Defaults to true. */
  warnOnLargeDirectTools?: boolean;
  /** Register the trusted MCP-only JavaScript scripting tool. Defaults to true; set false to hide it. */
@@ -780,6 +823,9 @@ export interface ServerCacheEntry {
  prompts?: CachedPrompt[];
  resourceTemplates?: CachedResourceTemplate[];
  instructions?: string;
+ /** Server-level hints from the aggregated tools/list result (MCP 2026-07-28). */
+ ttlMs?: ListToolsResult["ttlMs"];
+ cacheScope?: ListToolsResult["cacheScope"];
  cachedAt: number;
 }
 

@@ -5,6 +5,8 @@ import type {
 import {
   UrlElicitationRequiredError,
   type Client,
+  type Progress,
+  type RequestOptions,
 } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
@@ -84,6 +86,7 @@ import {
   ensureToolCallApproved,
   isToolCallApprovalRequired,
 } from "./tool-approval.ts";
+import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -102,6 +105,35 @@ type AutoAuthResult =
   | { status: "skipped" }
   | { status: "success" }
   | { status: "failed"; message: string };
+
+let nextProgressInvocationId = 1;
+
+/**
+ * Bridges SDK request-local progress callbacks to the interactive UI notify
+ * path (#437 item 3). The SDK owns `_meta.progressToken` injection when
+ * `onprogress` is set; this never writes the token manually.
+ */
+function withUiProgressBridge(
+  options: RequestOptions | undefined,
+  ui: McpExtensionState["ui"],
+  serverName: string,
+  toolName: string,
+): RequestOptions | undefined {
+  if (!ui) return options;
+  const label = `MCP ${serverName}/${toolName}#${nextProgressInvocationId++}`;
+  return {
+    ...options,
+    onprogress: (progress: Progress) => {
+      const ratio = `${progress.progress}${progress.total === undefined ? "" : `/${progress.total}`}`;
+      ui.notify(
+        progress.message
+          ? `${label}: ${progress.message} (${ratio})`
+          : `${label}: ${ratio}`,
+        "info",
+      );
+    },
+  };
+}
 
 function getToolMatches(
   metadata: ToolMetadata[] | undefined,
@@ -128,6 +160,19 @@ function getEnabledToolMatches(
       matches.push({ server, tool });
   }
   return matches;
+}
+
+function serverBackoffResult(
+  state: McpExtensionState,
+  mode: string,
+  serverName: string,
+): ProxyToolResult {
+  const failedAgo = getFailureAgeSeconds(state, serverName) ?? 0;
+  const message = `Server "${serverName}" not available (last failed ${failedAgo}s ago)`;
+  return {
+    content: [{ type: "text" as const, text: message }],
+    details: { mode, error: "server_backoff", server: serverName },
+  };
 }
 
 function getSingleToolMatch(
@@ -428,7 +473,6 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
     const disabled = isServerDisabled(definition);
     const connection = disabled ? undefined : state.manager.getConnection(name);
     const metadata = disabled ? undefined : state.toolMetadata.get(name);
-    const toolCount = metadata?.length ?? 0;
     const failedAgo = disabled ? null : getFailureAgeSeconds(state, name);
     let status = disabled ? "disabled" : "not connected";
     if (!disabled && connection?.status === "connected") {
@@ -440,6 +484,8 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
     } else if (!disabled && metadata !== undefined) {
       status = "cached";
     }
+
+    const toolCount = status === "failed" ? 0 : metadata?.length ?? 0;
 
     servers.push({
       name,
@@ -668,7 +714,7 @@ export async function executeAuthComplete(
     }
 
     await state.manager.close(serverName);
-    clearFailure(state, serverName);
+    clearFailure(state, serverName, "auth-complete");
     updateStatusBar(state);
     return {
       content: [
@@ -702,22 +748,27 @@ export async function executeAuthComplete(
   }
 }
 
-export function executeDescribe(
-  state: McpExtensionState,
-  toolName: string,
-): ProxyToolResult {
-  const exactMatches = getEnabledToolMatches(state, toolName, true);
-  if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
-  if (
-    exactMatches.length === 0 &&
-    getEnabledToolMatches(state, toolName, false).length > 1
-  ) {
+    export function executeDescribe(
+      state: McpExtensionState,
+      toolName: string,
+    ): ProxyToolResult {
+      const exactMatches = getEnabledToolMatches(state, toolName, true).filter(
+        (match) => !isServerInActiveFailureBackoff(state, match.server),
+      );
+      if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
+      if (
+        exactMatches.length === 0 &&
+        getEnabledToolMatches(state, toolName, false).filter(
+          (match) => !isServerInActiveFailureBackoff(state, match.server),
+        ).length > 1
+      ) {
     return ambiguousToolResult("describe", toolName);
   }
 
   let serverName = exactMatches[0]?.server;
   let toolMeta = exactMatches[0]?.tool;
   let disabledMatch: string | undefined;
+  let failedMatch: string | undefined;
 
   if (!toolMeta) {
     for (const [server, metadata] of state.toolMetadata.entries()) {
@@ -725,6 +776,10 @@ export function executeDescribe(
       if (!found) continue;
       if (isServerDisabled(state.config.mcpServers[server])) {
         disabledMatch ??= server;
+        continue;
+      }
+      if (isServerInActiveFailureBackoff(state, server)) {
+        failedMatch ??= server;
         continue;
       }
       serverName = server;
@@ -735,6 +790,7 @@ export function executeDescribe(
 
   if (!serverName || !toolMeta) {
     if (disabledMatch) return disabledResult("describe", disabledMatch);
+    if (failedMatch) return serverBackoffResult(state, "describe", failedMatch);
     const suggestions = rankSuggestions(state, toolName, 5);
     const suggestionText =
       suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
@@ -799,6 +855,8 @@ export function executeSearch(
   const showSchemas = includeSchemas !== false;
   if (server && isServerDisabled(state.config.mcpServers[server]))
     return disabledResult("search", server);
+  if (server && isServerInActiveFailureBackoff(state, server))
+    return serverBackoffResult(state, "search", server);
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
   if (regex) {
@@ -865,6 +923,7 @@ export function executeSearch(
     for (const [serverName, metadata] of state.toolMetadata.entries()) {
       const definition = state.config.mcpServers[serverName];
       if (isServerDisabled(definition)) continue;
+      if (isServerInActiveFailureBackoff(state, serverName)) continue;
       if (server && serverName !== server) continue;
       for (const tool of metadata) {
         const matched =
@@ -1011,6 +1070,12 @@ export function executeList(
   const metadata = state.toolMetadata.get(server);
   const toolNames = metadata?.map((m) => m.name) ?? [];
   const connection = state.manager.getConnection(server);
+  if (isServerInActiveFailureBackoff(state, server)) {
+    return {
+      ...serverBackoffResult(state, "list", server),
+      details: { mode: "list", server, tools: [], count: 0, error: "server_backoff" },
+    };
+  }
   const instructions = state.serverInstructions.get(server);
   let instructionsText = "";
   if (instructions) {
@@ -1126,6 +1191,8 @@ export function executeInstructions(
   }
   if (isServerDisabled(definition))
     return disabledResult("instructions", server);
+  if (isServerInActiveFailureBackoff(state, server))
+    return serverBackoffResult(state, "instructions", server);
 
   const instructions = state.serverInstructions.get(server);
   if (instructions) {
@@ -1265,9 +1332,9 @@ export async function executeConnect(
       state.serverInstructions.delete(serverName);
     }
     updateMetadataCache(state, serverName);
-    notifyToolMetadataUpdated(state, serverName, "proxy-connect");
+    const restored = clearFailure(state, serverName, "proxy-connect");
+    if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-connect");
     markKeepAliveAfterConnect(state, serverName);
-    clearFailure(state, serverName);
     updateStatusBar(state);
     return executeList(state, serverName);
   } catch (error) {
@@ -1772,10 +1839,10 @@ export async function executeCall(
           };
         }
       }
-      clearFailure(state, serverName);
       updateServerMetadata(state, serverName);
       updateMetadataCache(state, serverName);
-      notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
+      const restored = clearFailure(state, serverName, "proxy-call-reconnect");
+      if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
       markKeepAliveAfterConnect(state, serverName);
       updateStatusBar(state);
       const match = getSingleToolMatch(
@@ -1876,20 +1943,21 @@ export async function executeCall(
       protocolVersion,
     ) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
 
-  // T16: Register one-shot progress listener when progressToken provided.
-  // The SDK injects _meta.progressToken itself when options.onprogress is set;
-  // our onprogress bridges SDK-delivered progress to the server-scoped
-  // listener registry instead of hand-rolling the token into _meta.
-  if (progressToken !== undefined) {
-    if (!requestOptions) requestOptions = {};
-    (requestOptions as Record<string, unknown>).onprogress = (
-      progress: Omit<McpProgressNotification, "progressToken">,
-    ) => {
-      state.manager.getProgressListener(
-        serverName,
-        progressToken,
-      )?.({ ...progress, progressToken });
-    };
+  // Progress bridging: without an explicit progressToken, request-local
+  // SDK progress goes straight to interactive notify (#437 item 3); the
+  // SDK injects _meta.progressToken itself when options.onprogress is set,
+  // so we never write the token manually. With a progressToken (T16),
+  // SDK-delivered progress is bridged to the server-scoped listener
+  // registry instead; the registered handler owns the ui notification,
+  // so both paths notify exactly once.
+  if (progressToken === undefined) {
+    requestOptions = withUiProgressBridge(
+      requestOptions,
+      state.ui,
+      serverName,
+      toolMeta.originalName,
+    );
+  } else {
     const progressHandler = (notification: McpProgressNotification) => {
       const message = notification.message
         ? `${notification.message} (${notification.progress}${notification.total === undefined ? "" : `/${notification.total}`})`
@@ -1901,6 +1969,15 @@ export async function executeCall(
       progressToken,
       progressHandler,
     );
+    if (!requestOptions) requestOptions = {};
+    (requestOptions as Record<string, unknown>).onprogress = (
+      progress: Omit<McpProgressNotification, "progressToken">,
+    ) => {
+      state.manager.getProgressListener(
+        serverName,
+        progressToken,
+      )?.({ ...progress, progressToken });
+    };
     progressCleanup = () =>
       state.manager.unregisterProgressListener(serverName, progressToken);
   }

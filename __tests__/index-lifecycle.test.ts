@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
+  prepareDirectToolArguments: vi.fn((_schema: unknown, args: unknown) => args),
   getMissingConfiguredDirectToolServers: vi.fn(() => []),
   resolveDirectTools: vi.fn(() => []),
   showStatus: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock("../direct-tools.ts", () => ({
   buildProxyDescription: mocks.buildProxyDescription,
   createDirectToolExecutor: mocks.createDirectToolExecutor,
   getMissingConfiguredDirectToolServers: mocks.getMissingConfiguredDirectToolServers,
+  prepareDirectToolArguments: mocks.prepareDirectToolArguments,
   resolveDirectTools: mocks.resolveDirectTools,
 }));
 
@@ -102,7 +104,12 @@ vi.mock("../proxy-modes.ts", () => ({
 vi.mock("../utils.ts", () => ({
   formatTerminalError: (error: unknown) => error instanceof Error ? error.message : String(error),
   getConfigPathFromArgv: mocks.getConfigPathFromArgv,
+  interpolateEnvRecord: (value: Record<string, string> | undefined) => value,
+  interpolateEnvVars: (value: string | undefined) => value,
   normalizeDirectToolInputSchema: mocks.normalizeDirectToolInputSchema,
+  resolveBearerToken: (definition: { bearerToken?: string }) => definition.bearerToken,
+  resolveConfigPath: (value: string | undefined) => value,
+  resolveServerUrl: (definition: { url?: string }) => definition.url,
   sanitizeTerminalText: (text: string) => text,
   truncateAtWord: mocks.truncateAtWord,
 }));
@@ -119,7 +126,7 @@ function createDeferred<T>() {
 
 function createState() {
   return {
-    manager: { getAllConnections: () => new Map() },
+    manager: { getAllConnections: () => new Map(), getConnection: vi.fn(() => undefined) },
     lifecycle: {
       gracefulShutdown: vi.fn().mockResolvedValue(undefined),
       ensureConverged: vi.fn().mockResolvedValue(undefined),
@@ -153,6 +160,7 @@ function createPi(options: { unregisterTool?: false | ((name: string) => boolean
       on: vi.fn((event: string, handler: (...args: any[]) => unknown) => {
         handlers.set(event, handler);
       }),
+      events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
       getActiveTools: vi.fn(() => activeTools),
       setActiveTools: vi.fn((nextActiveTools: string[]) => {
@@ -180,6 +188,7 @@ function createStatusObservingPi() {
     activeTools = [...nextActiveTools];
   });
   api.events = {
+    on: vi.fn(),
     emit: vi.fn((channel: string, payload: { connectedCount?: number }) => {
       if (channel !== MCP_STATUS_EVENT || payload.connectedCount !== 1) return;
       connectedSurfaces.push(activeTools
@@ -229,6 +238,12 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
     mocks.createDirectToolExecutor.mockReturnValue(vi.fn());
+    mocks.prepareDirectToolArguments.mockImplementation((_schema: unknown, args: unknown) => {
+      const input = args as { filter?: unknown };
+      return typeof input.filter === "string"
+        ? { ...input, filter: JSON.parse(input.filter) }
+        : args;
+    });
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue([]);
     mocks.resolveDirectTools.mockReturnValue([]);
     mocks.getConfigPathFromArgv.mockReturnValue(undefined);
@@ -661,6 +676,92 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
   });
 
+  it("does not refresh frozen direct tools on failure-backoff metadata updates", async () => {
+    const config = {
+      settings: { freezeDirectTools: true },
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search demo",
+      },
+    ]);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const callsAfterInitialSync = mocks.resolveDirectTools.mock.calls.length;
+    state.onToolMetadataUpdated?.("demo", "failure-backoff-started");
+
+    expect(mocks.resolveDirectTools).toHaveBeenCalledTimes(callsAfterInitialSync);
+  });
+
+  it("keeps hidden direct tool names reserved against namespace proxies during backoff", async () => {
+    const { computeServerHash } = await import("../metadata-cache.ts");
+    const failedDefinition = { command: "failed", directTools: true };
+    const proxyDefinition = { command: "foo" };
+    const config = {
+      settings: { toolPrefix: "mcp" },
+      mcpServers: {
+        failed: failedDefinition,
+        foo: proxyDefinition,
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: {
+        foo: {
+          configHash: computeServerHash(proxyDefinition),
+          cachedAt: Date.now(),
+          tools: [{ name: "run" }],
+          resources: [],
+        },
+      },
+    });
+    mocks.resolveDirectTools.mockImplementation((_config, _cache, _prefix, _env, unavailableServers, reservedNames) => {
+      reservedNames?.add("mcp__foo");
+      if (unavailableServers?.has("failed")) {
+        return [];
+      }
+      return [{
+        serverName: "failed",
+        originalName: "foo",
+        prefixedName: "mcp__foo",
+        description: "Failed direct",
+      }];
+    });
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    state.failureTracker.set("failed", Date.now());
+    state.onToolMetadataUpdated?.("failed", "failure-backoff-started");
+
+    expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({
+      name: "mcp__foo",
+      description: expect.stringContaining("Namespace-proxy"),
+    }));
+  });
+
   it("publishes connected status only after replacing stale cached direct tools", async () => {
     const config = {
       settings: { disableProxyTool: true },
@@ -1061,6 +1162,8 @@ describe("mcpAdapter session lifecycle", () => {
       null,
       "server",
       undefined,
+      expect.any(Set),
+      expect.any(Set),
     );
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "memory_search" }));
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
@@ -1073,6 +1176,51 @@ describe("mcpAdapter session lifecycle", () => {
       expect.objectContaining({ config: expect.objectContaining({ mcpServers: config.mcpServers }) }),
     );
     expect(mocks.initializeMcp.mock.calls[0][3].config).not.toBe(config);
+  });
+
+  it("adds strict direct-tool argument preparation only when configured", async () => {
+    const inputSchema = {
+      type: "object",
+      required: ["filter"],
+      properties: {
+        filter: {
+          type: "object",
+          required: ["site"],
+          properties: { site: { type: "string" } },
+        },
+      },
+    };
+    mocks.resolveDirectTools.mockReturnValue([{
+      serverName: "memory",
+      originalName: "search",
+      prefixedName: "memory_search",
+      description: "Search",
+      inputSchema,
+    }]);
+    const { createMcpAdapter } = await import("../index.ts");
+    const strictPi = createPi();
+    createMcpAdapter({
+      config: {
+        mcpServers: { memory: { command: "memory", directTools: true } },
+        settings: { strictDirectToolArguments: true },
+      },
+    })(strictPi.api);
+    const strictTool = strictPi.api.registerTool.mock.calls.find(
+      ([tool]: [Record<string, unknown>]) => tool.name === "memory_search",
+    )?.[0];
+
+    expect(strictTool.prepareArguments({ filter: '{"site":"north"}' })).toEqual({
+      filter: { site: "north" },
+    });
+
+    const leanPi = createPi();
+    createMcpAdapter({
+      config: { mcpServers: { memory: { command: "memory", directTools: true } } },
+    })(leanPi.api);
+    const leanTool = leanPi.api.registerTool.mock.calls.find(
+      ([tool]: [Record<string, unknown>]) => tool.name === "memory_search",
+    )?.[0];
+    expect(leanTool).not.toHaveProperty("prepareArguments");
   });
 
   it("snapshots caller config and isolates separate factories", async () => {

@@ -1677,10 +1677,10 @@ describe("config discovery", () => {
     warning.mockRestore();
   });
 
-  it("uses automatic protocol negotiation for remote known-server presets", async () => {
+  it("remote known-server presets inherit the default pinned protocol version", async () => {
     const { KNOWN_SERVER_PRESETS } = await import("../config.ts");
     for (const preset of KNOWN_SERVER_PRESETS.filter(({ entry }) => entry.url)) {
-      expect(preset.entry.protocolVersion).toBe("auto");
+      expect(preset.entry.protocolVersion).toBeUndefined();
     }
     expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "chrome-devtools")?.entry.protocolVersion).toBeUndefined();
   });

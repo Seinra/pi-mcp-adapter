@@ -34,25 +34,25 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     id: "deepwiki",
     name: "DeepWiki",
     summary: "Ask questions about public GitHub repositories.",
-    entry: { url: "https://mcp.deepwiki.com/mcp", protocolVersion: "auto" },
+    entry: { url: "https://mcp.deepwiki.com/mcp" },
   },
   {
     id: "context7",
     name: "Context7",
     summary: "Look up current library documentation and examples.",
-    entry: { url: "https://mcp.context7.com/mcp", protocolVersion: "auto" },
+    entry: { url: "https://mcp.context7.com/mcp" },
   },
   {
     id: "notion",
     name: "Notion",
     summary: "Search and work with your Notion workspace.",
-    entry: { url: "https://mcp.notion.com/mcp", auth: "oauth", protocolVersion: "auto" },
+    entry: { url: "https://mcp.notion.com/mcp", auth: "oauth" },
   },
   {
     id: "github",
     name: "GitHub",
     summary: "Work with GitHub through your Copilot account.",
-    entry: { url: "https://api.githubcopilot.com/mcp", auth: "oauth", protocolVersion: "auto" },
+    entry: { url: "https://api.githubcopilot.com/mcp", auth: "oauth" },
   },
   {
     id: "chrome-devtools",
@@ -622,13 +622,16 @@ function resolveImportCandidates(importKind: ImportKind, cwd: string): string[] 
   });
 }
 
-function parseJsonConfig(raw: string): unknown {
-  return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
+/** A parsed JSON/TOML document before shape validation. Callers must narrow via validateConfig/isRecord. */
+type ParsedConfigDocument = Record<string, unknown> | unknown[] | string | number | boolean | null;
+
+function parseJsonConfig(raw: string): ParsedConfigDocument {
+  return JSON.parse(stripJsonComments(raw, { trailingCommas: true })) as ParsedConfigDocument;
 }
 
-function readImportedConfig(path: string): unknown {
+function readImportedConfig(path: string): ParsedConfigDocument {
   const raw = readFileSync(path, "utf-8");
-  return path.endsWith(".toml") ? parseToml(raw) : parseJsonConfig(raw);
+  return path.endsWith(".toml") ? (parseToml(raw) as unknown as ParsedConfigDocument) : parseJsonConfig(raw);
 }
 
 function loadImportedConfig(

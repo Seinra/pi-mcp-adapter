@@ -99,21 +99,30 @@ function isUnauthorizedHttpError(error: unknown): boolean {
   );
 }
 
-function resolveVersionNegotiation(
-  definition: ServerDefinition,
-): VersionNegotiationOptions {
-  switch (definition.protocolVersion) {
-    case undefined:
-    case "auto":
-      return { mode: "auto" };
-    case MODERN_PROTOCOL_VERSION:
-      return { mode: { pin: MODERN_PROTOCOL_VERSION } };
-    default:
-      throw new Error(
-        `Invalid MCP protocolVersion: ${String(definition.protocolVersion)}`,
-      );
-  }
-}
+    /**
+     * Resolve protocol version negotiation for a server definition.
+     *
+     * The default (and an explicit pin) resolves to `{ mode: { pin } }` on the
+     * modern protocol revision: this fork is modern-only, and "auto"'s
+     * conservative fallback offers legacy-era versions that strict
+     * modern-only servers reject. "auto" remains as an explicit opt-in to the
+     * SDK's conservative negotiation.
+     */
+    function resolveVersionNegotiation(
+      definition: ServerDefinition,
+    ): VersionNegotiationOptions {
+      switch (definition.protocolVersion) {
+        case undefined:
+        case MODERN_PROTOCOL_VERSION:
+          return { mode: { pin: MODERN_PROTOCOL_VERSION } };
+        case "auto":
+          return { mode: "auto" };
+        default:
+          throw new Error(
+            `Invalid MCP protocolVersion: ${String(definition.protocolVersion)}`,
+          );
+      }
+    }
 
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
   if (Buffer.isBuffer(chunk)) {
@@ -935,12 +944,15 @@ export class McpServerManager {
     }
   }
 
-  private buildClientCapabilities(
-    protocolVersion?: string,
-  ): Record<string, unknown> {
+  private buildClientCapabilities(): Record<string, unknown> {
     const caps: Record<string, unknown> = {};
-    // Sampling OMITTED when protocolVersion === "2026-07-28" (P0 Fix)
-    if (this.samplingConfig && protocolVersion !== MODERN_PROTOCOL_VERSION) {
+    // sampling/createMessage is DEPRECATED in MCP 2026-07-28 but remains
+    // functional during the deprecation window (spec 03-key-changes.md
+    // §14). Declaring it is spec-legal and required for SDK handler
+    // registration coherence: assertRequestHandlerCapability throws SdkError
+    // CapabilityNotSupported when a handler is registered without the
+    // matching capability.
+    if (this.samplingConfig) {
       caps.sampling = {};
     }
     if (this.elicitationConfig) {
@@ -956,14 +968,7 @@ export class McpServerManager {
     serverName: string,
     definition: ServerDefinition,
   ): Client {
-    // Resolve protocol version for capability negotiation (P0 Fix + T06).
-    // Auto-negotiated connections don't know the era yet at client creation
-    // time — pass undefined so sampling stays enabled.
-    const protocolVersion =
-      definition.protocolVersion === MODERN_PROTOCOL_VERSION
-        ? MODERN_PROTOCOL_VERSION
-        : undefined;
-    const capabilities = this.buildClientCapabilities(protocolVersion);
+    const capabilities = this.buildClientCapabilities();
     const versionNegotiation = resolveVersionNegotiation(definition);
     let client: Client;
     client = new Client(

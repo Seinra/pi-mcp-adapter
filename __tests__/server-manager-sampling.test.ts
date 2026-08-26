@@ -89,7 +89,33 @@ describe("McpServerManager sampling", () => {
     );
   });
 
-  it("advertises elicitation capabilities and registers the handler before connecting", async () => {
+      it("advertises sampling on pinned connections with handler-capability coherence", async () => {
+        const { McpServerManager } = await import("../server-manager.ts");
+        const manager = new McpServerManager();
+        manager.setSamplingConfig({
+          autoApprove: true,
+          modelRegistry: {} as any,
+          getCurrentModel: () => undefined,
+          getSignal: () => undefined,
+        });
+
+        await manager.connect("pinned", {
+          command: "node",
+          args: ["server.js"],
+          protocolVersion: "2026-07-28",
+        });
+
+        const client = mocks.clients[0];
+        expect(client.options).toMatchObject({
+          capabilities: { sampling: {} },
+        });
+        expect(client.setRequestHandler).toHaveBeenCalledTimes(1);
+        expect(client.setRequestHandler.mock.invocationCallOrder[0]).toBeLessThan(
+          client.connect.mock.invocationCallOrder[0],
+        );
+      });
+
+      it("advertises elicitation capabilities and registers the handler before connecting", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     manager.setElicitationConfig({

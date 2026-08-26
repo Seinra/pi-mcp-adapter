@@ -9,14 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     
 ### Breaking changes
     
-- MCP legacy protocol mode removed: `protocolVersion` now accepts only `"auto"` (new default — SDK version negotiation probes `server/discover` and falls back conservatively to the classic initialize handshake) or a pinned `"2026-07-28"`. Configs that set `protocolVersion: "legacy"` must drop the field or use `"auto"`.
+- MCP legacy protocol mode removed: `protocolVersion` now accepts only a pinned `"2026-07-28"` (new default — every connection pins the modern revision) or explicit `"auto"` (SDK conservative negotiation; it offers legacy-era versions during handshake and fails against strict modern-only servers). Configs that set `protocolVersion: "legacy"` must drop the field.
 - SSE transport fallback removed: Streamable HTTP failures now surface directly instead of silently retrying over SSE. `httpTransport` still pins an explicit transport for Agent Plugins.
 - Plaintext `tokens.json` one-time import removed: credentials are read from the OS credential store only. Keychain/Credential Manager users are unaffected; anyone still on a pre-2.x plaintext entry must re-authenticate once.
 - npx v1 cache cleanup dropped on startup; stale v1 cache files are simply ignored.
     
 ### Added
 
-- Per-server MCP 2026-07-28 support: pinned modern connections omit the deprecated sampling capability, structured content and result metadata (`structuredContent`, `outputSchema`, `resultType`, `serverInfo`) surface through proxy and direct-tool results, resource templates map with pagination and SDK fallback, completions expose a capability-gated API on `McpServerManager`, and progress notifications use server-scoped token listeners bridged through the SDK's per-request `onprogress` callback.
+- Per-server MCP 2026-07-28 support: pinned modern connections declare the sampling capability while it remains functional in the protocol's deprecation window (handler registration requires the declared capability), structured content and result metadata (`structuredContent`, `outputSchema`, `resultType`, `serverInfo`) surface through proxy and direct-tool results, resource templates map with pagination and SDK fallback, completions expose a capability-gated API on `McpServerManager`, and progress notifications use server-scoped token listeners bridged through the SDK's per-request `onprogress` callback.
 - Cached tool metadata honors server-advertised `ttlMs`/`cacheScope` hints: an entry expires at its fetch time plus the tightest declared TTL (result-level list hints or per-tool stamps) instead of serving stale catalogs until the default max age.
 
 ### Fixed

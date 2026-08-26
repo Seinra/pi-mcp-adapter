@@ -421,7 +421,7 @@ describe("McpServerManager HTTP bearer auth", () => {
       protocolVersion: "2026-07-28",
     });
 
-    expect(mocks.clients[0].options.versionNegotiation).toEqual({ mode: "auto" });
+    expect(mocks.clients[0].options.versionNegotiation).toEqual({ mode: { pin: "2026-07-28" } });
     expect(mocks.clients[1].options.versionNegotiation).toEqual({ mode: "auto" });
     expect(mocks.clients[2].options.versionNegotiation).toEqual({ mode: { pin: "2026-07-28" } });
   });

@@ -528,10 +528,10 @@ export interface ServerEntry {
  /** Treat env values as already resolved literals. Used for Agent Plugin env rules. */
  literalEnv?: boolean;
  /**
-  * MCP protocol era negotiation for this server. Defaults to `"auto"`
-  * (SDK version negotiation probes `server/discover` at connect and falls
-  * back to the classic initialize handshake conservatively).
-  * `"2026-07-28"` pins the connection to that revision with no fallback.
+  * MCP protocol era for this server. DEFAULT pins the connection to
+  * `"2026-07-28"` with no fallback. Set `"auto"` only to opt into the SDK's
+  * conservative version negotiation, which offers legacy-era fallback
+  * versions that strict modern-only servers reject.
   */
  protocolVersion?: "auto" | "2026-07-28";
  // Keep configuration visible without allowing connections or execution.

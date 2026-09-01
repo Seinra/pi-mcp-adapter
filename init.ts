@@ -215,6 +215,10 @@ export async function initializeMcp(
     notifyToolMetadataUpdated(state, serverName, reason);
     updateStatusBar(state);
   });
+  manager.setListenStateChangedListener?.(() => {
+    if (!owner.isActive()) return;
+    updateStatusBar(state);
+  });
   owner.addCleanup(() => lifecycle.gracefulShutdown());
   owner.addCleanup(() => {
     if (state.uiServer) {
@@ -626,7 +630,11 @@ export function updateStatusBar(state: McpExtensionState): void {
     ui.setStatus("mcp", undefined);
     return;
   }
-  ui.setStatus("mcp", ui.theme ? ui.theme.fg("accent", formattedStatus) : formattedStatus);
+  const theme = ui.theme;
+  const styledStatus = typeof theme?.fg === "function"
+    ? theme.fg("accent", formattedStatus)
+    : formattedStatus;
+  ui.setStatus("mcp", styledStatus);
 }
 
 export async function lazyConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<boolean> {
@@ -637,6 +645,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     return false;
   }
   if (connection?.status === "connected") {
+    await state.manager.ensureListen?.(serverName, connection);
     updateServerMetadata(state, serverName);
     markKeepAliveAfterConnect(state, serverName);
     return true;

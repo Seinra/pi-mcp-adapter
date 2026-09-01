@@ -26,13 +26,23 @@ export type McpServerRuntimeStatus =
  | "not-connected"
  | "disabled";
 
+export type McpListenState =
+  | "active"
+  | "dropped"
+  | "re-establishing"
+  | "legacy"
+  | "not-listening"
+  | "disconnected";
+
 export interface McpServerStatusSnapshot {
- readonly name: string;
- readonly status: McpServerRuntimeStatus;
- readonly toolCount: number;
- readonly resourceCount?: number;
- readonly failedAgoSeconds?: number;
- readonly disabled: boolean;
+  readonly name: string;
+  readonly status: McpServerRuntimeStatus;
+  readonly toolCount: number;
+  readonly resourceCount?: number;
+  readonly failedAgoSeconds?: number;
+  readonly disabled: boolean;
+  readonly listenState: McpListenState;
+  readonly catalogStale?: boolean;
 }
 
 export interface McpStatusSnapshot {
@@ -223,6 +233,9 @@ export type UiDisplayMode = "inline" | "fullscreen" | "pip";
 export interface UiServerHandle {
   url: string;
   port: number;
+  /** URL of the second-origin MCP Apps sandbox proxy. */
+  proxyUrl: string;
+  proxyPort: number;
   sessionToken: string;
   serverName: string;
   toolName: string;
@@ -233,6 +246,7 @@ export interface UiServerHandle {
   sendToolResult: (result: CallToolResult) => void;
   sendResultPatch: (result: CallToolResult) => void;
   sendToolCancelled: (reason: string) => void;
+  sendResourceUpdated: (uri: string) => void;
   sendHostContext: (context: UiHostContext) => void;
   /** Get accumulated messages from this session */
   getSessionMessages: () => UiSessionMessages;
@@ -430,26 +444,28 @@ export type ContentBlock = TextContent | ImageContent;
 
 // OAuth configuration (SDK handles auto-discovery and dynamic registration)
 export interface OAuthConfig {
- /** OAuth grant type (defaults to authorization_code) */
- grantType?: "authorization_code" | "client_credentials";
- /** Pre-registered client ID (optional, dynamic registration used if not provided) */
- clientId?: string;
- /** Client secret for confidential clients */
- clientSecret?: string;
- /** Requested OAuth scopes */
- scope?: string;
- /** Extra authorization URL parameters for provider-specific extensions. Flow-owned parameters cannot be overridden. */
- authorizationParams?: Record<string, string>;
- /** Exact authorization-code redirect URI for pre-registered clients */
- redirectUri?: string;
- /** Client display name for dynamic registration */
- clientName?: string;
- /** Client homepage URI for dynamic registration */
- clientUri?: string;
- /** Client logo URL for dynamic registration; shown on consent screens */
- logoUri?: string;
- /** Security-weakening escape hatch for known-misconfigured authorization servers. */
- skipIssuerMetadataValidation?: boolean;
+  /** OAuth grant type (defaults to authorization_code) */
+  grantType?: "authorization_code" | "client_credentials";
+  /** Pre-registered client ID (optional, dynamic registration used if not provided) */
+  clientId?: string;
+  /** Client secret for confidential clients */
+  clientSecret?: string;
+  /** Requested OAuth scopes */
+  scope?: string;
+  /** Extra authorization URL parameters for provider-specific extensions. Flow-owned parameters cannot be overridden. */
+  authorizationParams?: Record<string, string>;
+  /** Exact authorization-code redirect URI for pre-registered clients. HTTPS redirects use manual callback URL completion. */
+  redirectUri?: string;
+  /** Client display name for dynamic registration */
+  clientName?: string;
+  /** Client homepage URI for dynamic registration */
+  clientUri?: string;
+  /** Client logo URL for dynamic registration; shown on consent screens */
+  logoUri?: string;
+  /** HTTPS URL for an authorization-server metadata document used instead of MCP discovery */
+  authServerMetadataUrl?: string;
+  /** Security-weakening escape hatch for known-misconfigured authorization servers. */
+  skipIssuerMetadataValidation?: boolean;
 }
 
 /**
@@ -599,79 +615,78 @@ export interface McpToolApprovalRequest {
 }
 
 export interface McpSettings {
- toolPrefix?: ToolPrefix;
- /** Show the plug prefix in MCP status and connection text (default: true). Set to false to disable it. */
- showStatusIcon?: boolean;
- /** Footer status verbosity: full details, compact connected/enabled count, or no footer status. Defaults to full. */
- mcpFooterStatus?: McpFooterStatus;
- /** Show successful startup connection notifications. Defaults to true. */
- notifyOnStartupConnect?: boolean;
- /** Discover detected host-specific MCP configs only when explicitly enabled. */
- hostConfigDiscovery?: HostConfigDiscovery;
- /** Agent Plugin package directories to load MCP servers from. */
- agentPluginPaths?: string[];
- idleTimeout?: number; // minutes, default 10, 0 to disable
- requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
- directTools?: boolean;
- /**
-  * Validate direct-tool inputs against the advertised schema after recovering
-  * one JSON string layer for object and array properties. Defaults to false.
-  */
- strictDirectToolArguments?: boolean;
- /**
-  * Include the byte-bounded raw MCP result in direct-tool details. The default
-  * `lean` mode keeps the existing small details object.
-  */
- directToolResultDetails?: "lean" | "bounded";
- /** Show the advisory when 75 or more direct tools resolve. Defaults to true. */
- warnOnLargeDirectTools?: boolean;
- /** Register the trusted MCP-only JavaScript scripting tool. Defaults to true; set false to hide it. */
- scriptMode?: boolean;
- /** Render MCP tool results as compact self-rendered rows by default, or as the legacy boxed row. */
- toolResultRendering?: "compact" | "boxed";
- /** Number of result text lines to show before expansion. Supports 1, 2, or 3. Defaults to 1 in compact mode and 3 in boxed mode. */
- collapsedResultLines?: 1 | 2 | 3;
- /** Default approval gate for matching tools/resources; per-server settings override it. */
- approveTools?: boolean | string[];
- disableProxyTool?: boolean;
- /** Freeze direct-tool registration after the initial sync. Automatic metadata updates
-  * (reconnects, lazy-connect, tool-list-changed) won't rebuild the system prompt,
-  * preserving the prompt-cache prefix. The agent rediscovers explicitly via
-  * mcp({ connect: "server" }). Default: false. */
- freezeDirectTools?: boolean;
- autoAuth?: boolean;
- sampling?: boolean;
- samplingAutoApprove?: boolean;
- elicitation?: boolean;
- /**
-  * Guard oversized MCP tool/resource output before it is returned to the model.
-  * Defaults to true (50 KiB / 2,000 lines inline text, 16 KiB details.mcpResult).
-  * Set to false to restore raw MCP output behavior, or pass an object to tune
-  * the limits. Env kill switch: MCP_OUTPUT_GUARD=0.
-  */
- outputGuard?: boolean | McpOutputGuardSettings;
- /**
-  * Opt-in metadata-only MCP protocol tracing. Payloads, prompts, tool
-  * arguments/results, authorization data, and URLs are never persisted.
-  */
- trace?: McpTraceSettings;
- /**
-  * Message returned in tool results when a server needs (re-)authentication.
-  * "${server}" is substituted with the server name. Defaults to a TUI
-  * instruction when unset.
-  */
- authRequiredMessage?: string;
- /**
-  * Legacy OAuth tokens.json import directory.
-  * Relative paths are resolved from the project root (cwd).
-  * Takes precedence over the agent's mcp-oauth/ legacy import directory but
-  * can still be overridden by the MCP_OAUTH_DIR env variable.
-  *
-  * Persistent OAuth credentials are stored in the operating system credential
-  * store, not this directory. Existing plaintext tokens.json files found here
-  * are imported once and removed.
-  */
- oauthDir?: string;
+  toolPrefix?: ToolPrefix;
+  /** Show the plug prefix in MCP status and connection text (default: true). Set to false to disable it. */
+  showStatusIcon?: boolean;
+  /** Footer status verbosity: full details, compact connected/enabled count, or no footer status. Defaults to full. */
+  mcpFooterStatus?: McpFooterStatus;
+  /** Show successful startup connection notifications. Defaults to true. */
+  notifyOnStartupConnect?: boolean;
+  /** Discover detected host-specific MCP configs only when explicitly enabled. */
+  hostConfigDiscovery?: HostConfigDiscovery;
+  /** Agent Plugin package directories to load MCP servers from. */
+  agentPluginPaths?: string[];
+  idleTimeout?: number; // minutes, default 10, 0 to disable
+  requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
+  directTools?: boolean;
+  /**
+   * Validate direct-tool inputs against the advertised schema after recovering
+   * one JSON string layer for object and array properties. Defaults to false.
+   */
+  strictDirectToolArguments?: boolean;
+  /**
+   * Include the byte-bounded raw MCP result in direct-tool details. The default
+   * `lean` mode keeps the existing small details object.
+   */
+  directToolResultDetails?: "lean" | "bounded";
+  /** Show the advisory when 75 or more direct tools resolve. Defaults to true. */
+  warnOnLargeDirectTools?: boolean;
+  /** Register the trusted MCP-only JavaScript scripting tool. Defaults to true; set false to hide it. */
+  scriptMode?: boolean;
+  /** Render MCP tool results as compact self-rendered rows by default, or as the legacy boxed row. */
+  toolResultRendering?: "compact" | "boxed";
+  /** Number of result text lines to show before expansion. Supports 1, 2, or 3. Defaults to 1 in compact mode and 3 in boxed mode. */
+  collapsedResultLines?: 1 | 2 | 3;
+  /** Default approval gate for matching tools/resources; per-server settings override it. */
+  approveTools?: boolean | string[];
+  disableProxyTool?: boolean;
+  /** Freeze direct-tool registration after the initial sync. Automatic metadata updates
+   * and explicit reconnects won't rebuild the system prompt, preserving the
+   * prompt-cache prefix. Proxy/search/cache metadata still refreshes. Default: false. */
+  freezeDirectTools?: boolean;
+  autoAuth?: boolean;
+  sampling?: boolean;
+  samplingAutoApprove?: boolean;
+  elicitation?: boolean;
+  /**
+   * Guard oversized MCP tool/resource output before it is returned to the model.
+   * Defaults to true (50 KiB / 2,000 lines inline text, 16 KiB details.mcpResult).
+   * Set to false to restore raw MCP output behavior, or pass an object to tune
+   * the limits. Env kill switch: MCP_OUTPUT_GUARD=0.
+   */
+  outputGuard?: boolean | McpOutputGuardSettings;
+  /**
+   * Opt-in metadata-only MCP protocol tracing. Payloads, prompts, tool
+   * arguments/results, authorization data, and URLs are never persisted.
+   */
+  trace?: McpTraceSettings;
+  /**
+   * Message returned in tool results when a server needs (re-)authentication.
+   * "${server}" is substituted with the server name. Defaults to a TUI
+   * instruction when unset.
+   */
+  authRequiredMessage?: string;
+  /**
+   * Legacy OAuth tokens.json import directory.
+   * Relative paths are resolved from the project root (cwd).
+   * Takes precedence over the agent's mcp-oauth/ legacy import directory but
+   * can still be overridden by the MCP_OAUTH_DIR env variable.
+   *
+   * Persistent OAuth credentials are stored in the operating system credential
+   * store, not this directory. Existing plaintext tokens.json files found here
+   * are imported once and removed.
+   */
+  oauthDir?: string;
 }
 
 // Root config
@@ -845,8 +860,10 @@ export interface McpPanelCallbacks {
 }
 
 export interface McpPanelResult {
- changes: Map<string, true | string[] | false>;
- cancelled: boolean;
+  changes: Map<string, true | string[] | false>;
+  /** Servers whose disabled flag changed during the panel session (name → new disabled state). */
+  disabledChanges: Map<string, boolean>;
+  cancelled: boolean;
 }
 
 /**

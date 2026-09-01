@@ -23,6 +23,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - HTTP client connection now reports an invalid server URL cleanly instead of leaking a raw `TypeError` when a configured URL fails parsing.
 
+### Added
+- The `/mcp` panel now supports enabling and disabling servers in place with `ctrl+d` on a server row. Saving persists the `disabled` flag to the project Pi layer and reloads the session, matching `/mcp disable` / `/mcp enable`. Thanks to [@ericykim](https://github.com/ericykim) for PR #479.
+
+### Changed
+- `/mcp setup` now lets users choose project `.mcp.json` or global `~/.config/mcp/mcp.json` as the write target for new shared MCP servers, while identifying Pi-owned files and compatibility inputs as advanced layers. The bundled `mcp-scripting` skill is manual-only by default. Thanks to [@w-winter](https://github.com/w-winter) for #477.
+
+### Fixed
+- Hardened MCP 2026 multi-round input flows across proxy, direct, resource, and UI-resource calls, with actionable no-UI errors and cancellation cleanup.
+- Hardened MCP 2026-07-28 catalog listens with visible drop/recovery state, bounded re-listen on activity, resource update signals for open UIs, and quiet metadata/cache refreshes. (#468)
+- MCP App views now load through a separate loopback sandbox proxy origin so storage APIs work without exposing host session capabilities. Thanks to [@drewbitt](https://github.com/drewbitt) for #480.
+- Implicit OAuth now reuses URL-bound stored credentials while preserving anonymous fallback. Thanks to [@wilt00](https://github.com/wilt00) for #471.
+- Per-server proxy lists now distinguish cached lazy tools from servers that need authentication while preserving active failure backoff. Thanks to [@inattendu](https://github.com/inattendu) for PR #474.
+
+## [2.31.0] - 2026-08-28
+
+### Highlights
+- MCP Apps-aware servers can now recognize Pi as a UI-capable host and expose interactive resources.
+- UI capability advertising works consistently across legacy and modern MCP protocol negotiation.
+- Manual OAuth callback completion now supports HTTPS redirect URLs for pre-registered clients.
+
+### Added
+
+- Pi now advertises MCP Apps UI support with the `io.modelcontextprotocol/ui` extension capability, so compatible servers can expose UI resources. Thanks to [@VikashLoomba](https://github.com/VikashLoomba) for #465.
+
+### Fixed
+
+- Pre-registered OAuth clients can use HTTPS callback URLs through manual callback completion instead of being rejected as non-local redirects. Thanks to [@jluisrojas](https://github.com/jluisrojas) for PR #464.
+
+## [2.30.0] - 2026-08-28
+
+### Highlights
+- Other extensions can safely inspect one runtime MCP server without seeing the whole MCP config.
+- OAuth setup works better with providers that publish authorization metadata at a custom URL.
+- MCP tool names are safer for providers, including servers with non-ASCII names.
+- Token CLI commands and Windows request-header cleanup are less fragile in installed packages and long-running sessions.
+
+### Added
+
+- Added a fail-closed API for child extensions to inspect one selected runtime MCP server without exporting configured servers or persisting the registration. (#453)
+- Added `oauth.authServerMetadataUrl` for servers whose authorization-server metadata cannot be discovered through MCP protected-resource metadata. Thanks to [@fmoda3](https://github.com/fmoda3) for #458.
+
+### Fixed
+
+- Namespace proxy tool names now use provider-safe characters without making encoded-looking server names collide with non-ASCII server names. Thanks to [@nyankosama](https://github.com/nyankosama) for PR #463.
+- npm-installed token CLI commands now load their credential, config, and utility helpers from the published JavaScript build instead of package-local TypeScript files. Thanks to [@Qhilm](https://github.com/Qhilm) for #456.
+- Server-scoped MCP calls now resolve raw upstream tool names before normalized fallbacks without weakening ambiguity checks. Thanks to [@MikeLP](https://github.com/MikeLP) for #452.
+- Windows request-header command cleanup now treats an already-exited process (`taskkill` exit code 128) as successful cleanup. Thanks to [@peterxcx](https://github.com/peterxcx) for #457.
+
+## [2.29.0] - 2026-08-26
+
+### Highlights
+- `/mcp setup` can now add Parallel Search as an opt-in preset.
+- Users can try web search and page fetching without first creating an API key.
+- MCP status updates work better in non-TUI hosts that provide plain theme values.
+
+### Added
+- Added an opt-in Parallel Search preset to `/mcp setup` for web search and page fetching without an API key. Thanks to [@georgeatparallel](https://github.com/georgeatparallel) for PR #448.
+
+### Fixed
+- MCP status updates now use plain text when a non-TUI host provides a theme without styling methods. Thanks to [@jinnnyang](https://github.com/jinnnyang) for #449.
+
 ## [2.28.0] - 2026-08-26
 
 ### Highlights

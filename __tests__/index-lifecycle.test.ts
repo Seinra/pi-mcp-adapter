@@ -709,6 +709,43 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.resolveDirectTools).toHaveBeenCalledTimes(callsAfterInitialSync);
   });
 
+  it("does not mutate frozen direct tools on explicit proxy connect or slash reconnect", async () => {
+    const config = {
+      settings: { freezeDirectTools: true },
+      mcpServers: {
+        demo: { command: "demo", directTools: true },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue([{
+      serverName: "demo",
+      originalName: "search",
+      prefixedName: "demo_search",
+      description: "Search demo",
+    }]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    const callsAfterInitialSync = mocks.resolveDirectTools.mock.calls.length;
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+
+    await proxyTool.execute("call-1", { connect: "demo" });
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    await commandDef.handler("reconnect demo", { hasUI: false });
+
+    expect(mocks.executeConnect).toHaveBeenCalledWith(state, "demo", undefined);
+    expect(mocks.reconnectServers).toHaveBeenCalledWith(state, expect.any(Object), "demo");
+    expect(mocks.resolveDirectTools).toHaveBeenCalledTimes(callsAfterInitialSync);
+  });
+
   it("keeps hidden direct tool names reserved against namespace proxies during backoff", async () => {
     const { computeServerHash } = await import("../metadata-cache.ts");
     const failedDefinition = { command: "failed", directTools: true };
@@ -1970,6 +2007,10 @@ describe("mcpAdapter session lifecycle", () => {
     expect(toolResult?.({ details: { error: "tool_error", server: "demo" } })).toEqual({ isError: true });
     // the call itself threw and was caught (proxy path) -> tagged call_failed
     expect(toolResult?.({ details: { mode: "call", error: "call_failed", message: "boom" } })).toEqual({ isError: true });
+    expect(toolResult?.({ details: { mode: "call", error: "input_required_needs_ui", server: "demo" } })).toEqual({ isError: true });
+    expect(toolResult?.({
+      details: { mode: "script", calls: [{ path: "demo_needs_ui", ok: false, error: "input_required_needs_ui" }] },
+    })).toEqual({ isError: true });
     // a precondition code is not a tool-execution failure -> left untouched
     expect(toolResult?.({ details: { error: "auth_required", server: "demo" } })).toBeUndefined();
   });

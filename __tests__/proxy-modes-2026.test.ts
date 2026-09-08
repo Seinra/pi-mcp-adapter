@@ -193,6 +193,7 @@ describe("proxy-modes 2026-07-28 features", () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         "token123",
       );
 
@@ -225,6 +226,7 @@ describe("proxy-modes 2026-07-28 features", () => {
           undefined,
           undefined,
           undefined,
+          undefined,
           "token123",
         ),
       ).resolves.toBeDefined();
@@ -246,6 +248,7 @@ describe("proxy-modes 2026-07-28 features", () => {
         "demo_tool",
         {},
         "demo",
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -278,6 +281,7 @@ describe("proxy-modes 2026-07-28 features", () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         "token123",
       );
 
@@ -304,6 +308,7 @@ describe("proxy-modes 2026-07-28 features", () => {
         "demo_tool",
         {},
         "demo",
+        undefined,
         undefined,
         undefined,
         undefined,

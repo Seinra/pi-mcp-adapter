@@ -188,16 +188,23 @@ function getSingleToolMatch(
   return matches.length > 1 ? "ambiguous" : matches[0];
 }
 
-type ServerScopedToolMatch = { tool: ToolMetadata; precedence: number } | "ambiguous";
+type ServerScopedToolMatch =
+  | { tool: ToolMetadata; precedence: number }
+  | "ambiguous";
 
-function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName: string): ServerScopedToolMatch | undefined {
+function getServerScopedToolMatch(
+  metadata: ToolMetadata[] | undefined,
+  toolName: string,
+): ServerScopedToolMatch | undefined {
   if (!metadata) return undefined;
   const normalizedName = toolName.replace(/-/g, "_");
   const matchesByPrecedence = [
     metadata.filter((tool) => tool.name === toolName),
     metadata.filter((tool) => tool.originalName === toolName),
     metadata.filter((tool) => tool.name.replace(/-/g, "_") === normalizedName),
-    metadata.filter((tool) => tool.originalName.replace(/-/g, "_") === normalizedName),
+    metadata.filter(
+      (tool) => tool.originalName.replace(/-/g, "_") === normalizedName,
+    ),
   ];
   for (const [precedence, matches] of matchesByPrecedence.entries()) {
     if (matches.length > 1) return "ambiguous";
@@ -206,7 +213,10 @@ function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName
   return undefined;
 }
 
-function ambiguousToolResult(mode: "call" | "describe", toolName: string): ProxyToolResult {
+function ambiguousToolResult(
+  mode: "call" | "describe",
+  toolName: string,
+): ProxyToolResult {
   const message = `Tool "${toolName}" matches multiple servers. Specify a server.`;
   return {
     content: [{ type: "text" as const, text: message }],
@@ -247,13 +257,22 @@ function getAuthFailedMessage(
   return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
 }
 
-function getRedirectDetails(authorizationUrl: string): { port?: number; remote: boolean } {
+function getRedirectDetails(authorizationUrl: string): {
+  port?: number;
+  remote: boolean;
+} {
   try {
-    const redirectUri = new URL(authorizationUrl).searchParams.get("redirect_uri");
+    const redirectUri = new URL(authorizationUrl).searchParams.get(
+      "redirect_uri",
+    );
     if (!redirectUri) return { remote: false };
     const redirect = new URL(redirectUri);
     const hostname = redirect.hostname.toLowerCase();
-    const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+    const local =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]" ||
+      hostname === "::1";
     const port = Number.parseInt(redirect.port, 10);
     return {
       ...(Number.isInteger(port) ? { port } : {}),
@@ -264,7 +283,10 @@ function getRedirectDetails(authorizationUrl: string): { port?: number; remote: 
   }
 }
 
-function formatManualAuthInstructions(serverName: string, authorizationUrl: string): string {
+function formatManualAuthInstructions(
+  serverName: string,
+  authorizationUrl: string,
+): string {
   const redirect = getRedirectDetails(authorizationUrl);
   const redirectNote = redirect.remote
     ? "The provider uses a pre-registered HTTPS callback. Copy its full URL from the browser address bar, even if the destination page reports an error."
@@ -286,7 +308,9 @@ function formatManualAuthInstructions(serverName: string, authorizationUrl: stri
       ? "Remote HTTPS callbacks must include the full callback URL so the OAuth state can be checked. JSON-string args remain supported."
       : 'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
     redirectNote,
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function attemptAutoAuth(
@@ -479,7 +503,15 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
 }
 
 export function executeStatus(state: McpExtensionState): ProxyToolResult {
-  const servers: Array<{ name: string; status: string; listenState: string; catalogStale?: boolean; toolCount: number; failedAgo: number | null; disabled?: boolean }> = [];
+  const servers: Array<{
+    name: string;
+    status: string;
+    listenState: string;
+    catalogStale?: boolean;
+    toolCount: number;
+    failedAgo: number | null;
+    disabled?: boolean;
+  }> = [];
 
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
@@ -498,14 +530,19 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       status = "cached";
     }
 
-    const toolCount = status === "failed" ? 0 : metadata?.length ?? 0;
+    const toolCount = status === "failed" ? 0 : (metadata?.length ?? 0);
 
-    const listenState = connection?.status === "connected" ? connection.listenState : "disconnected";
+    const listenState =
+      connection?.status === "connected"
+        ? connection.listenState
+        : "disconnected";
     servers.push({
       name,
       status,
       listenState,
-      ...(connection?.status === "connected" && connection.listenCatalogStale ? { catalogStale: true } : {}),
+      ...(connection?.status === "connected" && connection.listenCatalogStale
+        ? { catalogStale: true }
+        : {}),
       toolCount,
       failedAgo,
       ...(disabled ? { disabled: true } : {}),
@@ -528,17 +565,18 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       continue;
     }
     if (server.status === "connected") {
-      const listen = server.listenState === "active"
-        ? server.catalogStale
-          ? ", listen active, catalog may be stale"
-          : ", listen active"
-        : server.listenState === "dropped"
-          ? ", catalog may be stale; will reconcile on next keep-alive or tool use"
-          : server.listenState === "re-establishing"
-            ? ", re-establishing listen"
-            : server.listenState === "legacy"
-              ? ", legacy notification path"
-              : ", not listening for catalog updates";
+      const listen =
+        server.listenState === "active"
+          ? server.catalogStale
+            ? ", listen active, catalog may be stale"
+            : ", listen active"
+          : server.listenState === "dropped"
+            ? ", catalog may be stale; will reconcile on next keep-alive or tool use"
+            : server.listenState === "re-establishing"
+              ? ", re-establishing listen"
+              : server.listenState === "legacy"
+                ? ", legacy notification path"
+                : ", not listening for catalog updates";
       text += `✓ ${server.name} (${server.toolCount} tools${listen})\n`;
       continue;
     }
@@ -559,7 +597,8 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   const directToolsFrozen = state.config.settings?.freezeDirectTools === true;
   if (directToolsFrozen) {
-    text += "\nDirect tools frozen; active registrations may differ from current metadata.\n";
+    text +=
+      "\nDirect tools frozen; active registrations may differ from current metadata.\n";
   }
 
   if (servers.length > 0) {
@@ -568,7 +607,14 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "status", servers, totalTools, connectedCount, disabledCount, directToolsFrozen },
+    details: {
+      mode: "status",
+      servers,
+      totalTools,
+      connectedCount,
+      disabledCount,
+      directToolsFrozen,
+    },
   };
 }
 
@@ -774,20 +820,20 @@ export async function executeAuthComplete(
   }
 }
 
-    export function executeDescribe(
-      state: McpExtensionState,
-      toolName: string,
-    ): ProxyToolResult {
-      const exactMatches = getEnabledToolMatches(state, toolName, true).filter(
-        (match) => !isServerInActiveFailureBackoff(state, match.server),
-      );
-      if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
-      if (
-        exactMatches.length === 0 &&
-        getEnabledToolMatches(state, toolName, false).filter(
-          (match) => !isServerInActiveFailureBackoff(state, match.server),
-        ).length > 1
-      ) {
+export function executeDescribe(
+  state: McpExtensionState,
+  toolName: string,
+): ProxyToolResult {
+  const exactMatches = getEnabledToolMatches(state, toolName, true).filter(
+    (match) => !isServerInActiveFailureBackoff(state, match.server),
+  );
+  if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
+  if (
+    exactMatches.length === 0 &&
+    getEnabledToolMatches(state, toolName, false).filter(
+      (match) => !isServerInActiveFailureBackoff(state, match.server),
+    ).length > 1
+  ) {
     return ambiguousToolResult("describe", toolName);
   }
 
@@ -1099,7 +1145,13 @@ export function executeList(
   if (isServerInActiveFailureBackoff(state, server)) {
     return {
       ...serverBackoffResult(state, "list", server),
-      details: { mode: "list", server, tools: [], count: 0, error: "server_backoff" },
+      details: {
+        mode: "list",
+        server,
+        tools: [],
+        count: 0,
+        error: "server_backoff",
+      },
     };
   }
   const instructions = state.serverInstructions.get(server);
@@ -1368,7 +1420,8 @@ export async function executeConnect(
     }
     updateMetadataCache(state, serverName);
     const restored = clearFailure(state, serverName, "proxy-connect");
-    if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-connect");
+    if (!restored)
+      notifyToolMetadataUpdated(state, serverName, "proxy-connect");
     markKeepAliveAfterConnect(state, serverName);
     updateStatusBar(state);
     return executeList(state, serverName);
@@ -1402,6 +1455,8 @@ export async function executeCall(
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
   origin?: "proxy" | "script",
+  // Internal consumers own successful data delivery; origin remains approval metadata only.
+  internalDelivery?: { onSuccess: (data: unknown) => void },
   protocolVersion?: string,
   progressToken?: string | number,
 ): Promise<ProxyToolResult> {
@@ -1455,7 +1510,10 @@ export async function executeCall(
     };
   }
   if (serverName) {
-    const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
+    const match = getServerScopedToolMatch(
+      state.toolMetadata.get(serverName),
+      toolName,
+    );
     if (match === "ambiguous") return ambiguousToolResult("call", toolName);
     toolMeta = match?.tool;
     if (isServerDisabled(state.config.mcpServers[serverName])) {
@@ -1509,11 +1567,17 @@ export async function executeCall(
     const connected = await lazyConnect(state, serverName, ownedSignal);
     if (connected) {
       if (serverOverride) {
-        const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
+        const match = getServerScopedToolMatch(
+          state.toolMetadata.get(serverName),
+          toolName,
+        );
         if (match === "ambiguous") return ambiguousToolResult("call", toolName);
         toolMeta = match?.tool;
       } else {
-        const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
+        const match = getSingleToolMatch(
+          state.toolMetadata.get(serverName),
+          toolName,
+        );
         if (match === "ambiguous") return ambiguousToolResult("call", toolName);
         toolMeta = match;
       }
@@ -1548,8 +1612,12 @@ export async function executeCall(
               ownedSignal,
             );
             if (connectedAfterAuth) {
-              const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
-              if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+              const match = getServerScopedToolMatch(
+                state.toolMetadata.get(serverName),
+                toolName,
+              );
+              if (match === "ambiguous")
+                return ambiguousToolResult("call", toolName);
               toolMeta = match?.tool;
               if (!toolMeta) {
                 const suggestions = rankSuggestions(state, toolName, 5);
@@ -1873,15 +1941,22 @@ export async function executeCall(
       updateServerMetadata(state, serverName);
       updateMetadataCache(state, serverName);
       const restored = clearFailure(state, serverName, "proxy-call-reconnect");
-      if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
+      if (!restored)
+        notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
       markKeepAliveAfterConnect(state, serverName);
       updateStatusBar(state);
       if (serverOverride) {
-        const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
+        const match = getServerScopedToolMatch(
+          state.toolMetadata.get(serverName),
+          toolName,
+        );
         if (match === "ambiguous") return ambiguousToolResult("call", toolName);
         toolMeta = match?.tool;
       } else {
-        const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
+        const match = getSingleToolMatch(
+          state.toolMetadata.get(serverName),
+          toolName,
+        );
         if (match === "ambiguous") return ambiguousToolResult("call", toolName);
         toolMeta = match;
       }
@@ -2067,10 +2142,16 @@ export async function executeCall(
         },
         serverName,
         async (conn) => {
-          const refreshRead = await state.manager.prepareResourceUse?.(serverName, toolMeta.resourceUri!, conn);
+          const refreshRead = await state.manager.prepareResourceUse?.(
+            serverName,
+            toolMeta.resourceUri!,
+            conn,
+          );
           return conn.client.readResource(
             { uri: toolMeta.resourceUri! },
-            refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions,
+            refreshRead
+              ? { ...requestOptions, cacheMode: "refresh" }
+              : requestOptions,
           );
         },
       );
@@ -2078,6 +2159,18 @@ export async function executeCall(
         result.contents ?? [],
         state.owner?.signal,
       );
+      if (internalDelivery) {
+        throwIfAborted(ownedSignal);
+        internalDelivery.onSuccess(
+          content.length > 0
+            ? content
+                .filter((block) => block.type === "text")
+                .map((block) => block.text)
+                .join("\n")
+            : "(empty resource)",
+        );
+        return { content: [], details: { mode: "call", ...callIdentity } };
+      }
       const guarded = await guardMcpOutput(
         content.length > 0
           ? content
@@ -2122,11 +2215,17 @@ export async function executeCall(
       serverName,
       async (conn) => {
         await state.manager.ensureListen?.(serverName, conn);
-        return abortable(conn.client.callTool({
-          name: toolMeta.originalName,
-          arguments: normalizedArgs,
-          _meta: uiSession?.requestMeta,
-        }, requestOptions), ownedSignal);
+        return abortable(
+          conn.client.callTool(
+            {
+              name: toolMeta.originalName,
+              arguments: normalizedArgs,
+              _meta: uiSession?.requestMeta,
+            },
+            requestOptions,
+          ),
+          ownedSignal,
+        );
       },
     );
 
@@ -2151,7 +2250,15 @@ export async function executeCall(
       uiSession?.sendToolResult(
         result as unknown as import("@modelcontextprotocol/client").CallToolResult,
       );
+    }
 
+    if (!result.isError && internalDelivery) {
+      throwIfAborted(ownedSignal);
+      internalDelivery.onSuccess(result);
+      return { content: [], details: { mode: "call", ...callIdentity } };
+    }
+
+    if (toolMeta.uiResourceUri) {
       if (result.isError) {
         const mcpContent = (result.content ?? []) as McpContent[];
         const content = transformMcpContent(mcpContent, state.owner?.signal);

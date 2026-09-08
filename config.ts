@@ -16,9 +16,12 @@ import {
   loadAgentPluginConfigs,
   type AgentPluginSummary,
 } from "./agent-plugin-loader.ts";
+import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
 import {
+  formatServerNamespace,
   isServerDisabled,
+  type ClaudePluginConfig,
   type HostConfigDiscovery,
   type McpConfig,
   type ServerEntry,
@@ -325,7 +328,7 @@ export function getMcpDiscoverySummary(
 
   const importKinds = isExclusiveConfigMode()
     ? (readValidatedConfig(
-        getEffectivePiGlobalConfigPath(overridePath),
+        getPiGlobalConfigPath(overridePath),
         "MCP exclusive config",
       )?.imports ?? [])
     : (Object.keys(IMPORT_PATHS) as ImportKind[]);
@@ -448,7 +451,8 @@ export function loadMcpConfig(
     config = mergeConfigs(config, expandImports(loaded, cwd));
   }
 
-  if (isExclusiveConfigMode()) return config;
+  if (isExclusiveConfigMode())
+    return resolveConfiguredClaudePluginMcp(config, cwd);
 
   const packageConfig = loadPackageMcpConfigs(cwd);
   const pluginConfig = loadAgentPluginConfigs(
@@ -460,10 +464,62 @@ export function loadMcpConfig(
       ([name]) => !Object.hasOwn(pluginConfig.mcpServers, name),
     ),
   );
-  return mergeConfigs(
+  const higherPrecedenceConfig = mergeConfigs(
     { mcpServers: packageServers },
     mergeConfigs(pluginConfig, config),
   );
+  return mergeClaudePluginMcpDefaults(
+    config.claudePlugins,
+    higherPrecedenceConfig,
+    cwd,
+  );
+}
+
+export function resolveConfiguredClaudePluginMcp(
+  config: McpConfig,
+  cwd = process.cwd(),
+): McpConfig {
+  return mergeClaudePluginMcpDefaults(config.claudePlugins, config, cwd);
+}
+
+export function discoverConfiguredClaudePluginSkills(
+  config: McpConfig,
+  cwd = process.cwd(),
+): string[] {
+  return loadClaudePluginBundles(config.claudePlugins, cwd, validateConfig, {
+    mcp: false,
+    skills: true,
+  }).skillPaths;
+}
+
+function mergeClaudePluginMcpDefaults(
+  plugins: ClaudePluginConfig[] | undefined,
+  higherPrecedenceConfig: McpConfig,
+  cwd: string,
+): McpConfig {
+  const pluginServers = loadClaudePluginBundles(plugins, cwd, validateConfig, {
+    mcp: true,
+    skills: false,
+  }).mcpServers;
+  const higherNamesByNamespace = new Map(
+    Object.keys(higherPrecedenceConfig.mcpServers).map((name) => [
+      formatServerNamespace(name),
+      name,
+    ]),
+  );
+  const defaults = Object.fromEntries(
+    Object.entries(pluginServers).filter(([name]) => {
+      const higherName = higherNamesByNamespace.get(
+        formatServerNamespace(name),
+      );
+      if (!higherName || higherName === name) return true;
+      console.warn(
+        `Claude plugin MCP server "${name}" is shadowed by higher-precedence server "${higherName}" because both normalize to the same namespace`,
+      );
+      return false;
+    }),
+  );
+  return mergeConfigs({ mcpServers: defaults }, higherPrecedenceConfig);
 }
 
 function getMergedSettings(
@@ -590,7 +646,7 @@ function getConfigSources(
   overridePath?: string,
   cwd = process.cwd(),
 ): ConfigSourceSpec[] {
-  const userPath = getEffectivePiGlobalConfigPath(overridePath);
+  const userPath = getPiGlobalConfigPath(overridePath);
   const projectPath = getProjectConfigPath(cwd);
   const projectPiPath = getProjectPiConfigPath(cwd);
   const sources: ConfigSourceSpec[] = [];
@@ -681,21 +737,17 @@ function isExclusiveConfigMode(): boolean {
   return process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive";
 }
 
-function getEffectivePiGlobalConfigPath(overridePath?: string): string {
-  return getPiGlobalConfigPath(
-    isExclusiveConfigMode() ? undefined : overridePath,
-  );
-}
-
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
   const imports = mergeImports(base.imports, next.imports);
   const settings = next.settings
     ? { ...base.settings, ...next.settings }
     : base.settings;
+  const claudePlugins = next.claudePlugins ?? base.claudePlugins;
   return {
     mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers),
     ...(imports === undefined ? {} : { imports }),
     ...(settings === undefined ? {} : { settings }),
+    ...(claudePlugins === undefined ? {} : { claudePlugins }),
   };
 }
 
@@ -754,6 +806,7 @@ function mergeServerMaps(
         "cwd",
         "pluginDataDir",
         "literalEnv",
+        "inheritEnv",
         "socket",
       ] as const) {
         delete baseEntry[field];
@@ -767,6 +820,7 @@ function mergeServerMaps(
         "cwd",
         "pluginDataDir",
         "literalEnv",
+        "inheritEnv",
         "url",
         "headers",
         "requestHeadersCommand",
@@ -829,6 +883,9 @@ function expandImports(config: McpConfig, cwd = process.cwd()): McpConfig {
   return {
     imports: config.imports,
     ...(config.settings === undefined ? {} : { settings: config.settings }),
+    ...(config.claudePlugins === undefined
+      ? {}
+      : { claudePlugins: config.claudePlugins }),
     mcpServers: mergeServerMaps(importedServers, config.mcpServers),
   };
 }
@@ -955,7 +1012,52 @@ function validateConfig(raw: unknown): McpConfig {
     ...(raw.settings === undefined
       ? {}
       : { settings: raw.settings as McpSettings }),
+    ...(raw.claudePlugins === undefined
+      ? {}
+      : { claudePlugins: parseClaudePlugins(raw.claudePlugins) }),
   };
+}
+
+function parseClaudePlugins(value: unknown): ClaudePluginConfig[] {
+  if (!Array.isArray(value)) {
+    console.warn("Invalid claudePlugins config: expected an array");
+    return [];
+  }
+
+  const plugins: ClaudePluginConfig[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.path !== "string" ||
+      entry.path.trim().length === 0
+    ) {
+      console.warn(
+        `Invalid claudePlugins[${index}]: expected an object with a non-empty path`,
+      );
+      continue;
+    }
+    if (
+      (entry.mcp !== undefined && typeof entry.mcp !== "boolean") ||
+      (entry.skills !== undefined && typeof entry.skills !== "boolean")
+    ) {
+      console.warn(
+        `Invalid claudePlugins[${index}] for ${entry.path}: mcp and skills must be booleans`,
+      );
+      continue;
+    }
+    if (entry.mcp !== true && entry.skills !== true) {
+      console.warn(
+        `Invalid claudePlugins[${index}] for ${entry.path}: enable mcp, skills, or both`,
+      );
+      continue;
+    }
+    plugins.push({
+      path: entry.path,
+      ...(entry.mcp === undefined ? {} : { mcp: entry.mcp }),
+      ...(entry.skills === undefined ? {} : { skills: entry.skills }),
+    });
+  }
+  return plugins;
 }
 
 function toServerEntries(servers: unknown): Record<string, ServerEntry> {

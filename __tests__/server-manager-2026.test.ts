@@ -70,7 +70,7 @@ describe("McpServerManager 2026-07-28 features", () => {
       McpServerManager = mod.McpServerManager;
     });
 
-    it("omits sampling when protocolVersion is '2026-07-28'", () => {
+    it("declares sampling when protocolVersion is '2026-07-28'", () => {
       const manager = new McpServerManager();
       manager.setSamplingConfig({
         autoApprove: true,
@@ -79,9 +79,10 @@ describe("McpServerManager 2026-07-28 features", () => {
         getSignal: () => undefined,
       });
 
-      const caps = manager.buildClientCapabilities("2026-07-28");
-      expect(caps).not.toHaveProperty("sampling");
-      expect(caps).toEqual({});
+      // Fork: SDK assertRequestHandlerCapability throws when registering the sampling handler without the declared capability.
+      const caps = (manager as any).buildClientCapabilities();
+      expect(caps).toHaveProperty("sampling");
+      expect(caps.sampling).toEqual({});
     });
 
     it("includes sampling when protocolVersion is 'legacy' and sampling config exists", () => {
@@ -93,7 +94,7 @@ describe("McpServerManager 2026-07-28 features", () => {
         getSignal: () => undefined,
       });
 
-      const caps = manager.buildClientCapabilities("legacy");
+      const caps = (manager as any).buildClientCapabilities();
       expect(caps).toHaveProperty("sampling");
       expect(caps.sampling).toEqual({});
     });
@@ -107,7 +108,7 @@ describe("McpServerManager 2026-07-28 features", () => {
         getSignal: () => undefined,
       });
 
-      const caps = manager.buildClientCapabilities(undefined);
+      const caps = (manager as any).buildClientCapabilities();
       expect(caps).toHaveProperty("sampling");
       expect(caps.sampling).toEqual({});
     });
@@ -115,7 +116,7 @@ describe("McpServerManager 2026-07-28 features", () => {
     it("omits sampling when no sampling config exists regardless of protocolVersion", () => {
       const manager = new McpServerManager();
 
-      const caps = manager.buildClientCapabilities("legacy");
+      const caps = (manager as any).buildClientCapabilities();
       expect(caps).not.toHaveProperty("sampling");
     });
 
@@ -123,7 +124,7 @@ describe("McpServerManager 2026-07-28 features", () => {
       const manager = new McpServerManager();
       manager.setElicitationConfig({ allowUrl: true, ui: {} as any });
 
-      const caps = manager.buildClientCapabilities("2026-07-28");
+      const caps = (manager as any).buildClientCapabilities();
       expect(caps).toHaveProperty("elicitation");
       expect(caps.elicitation).toEqual({ form: {}, url: {} });
     });
@@ -674,7 +675,7 @@ describe("McpServerManager 2026-07-28 features", () => {
       );
     });
 
-    it("simulates notification dispatch through attachProgressNotificationHandler with scoped keys", async () => {
+    it("simulates notification dispatch through _attachProgressNotificationHandler with scoped keys", async () => {
       const { McpServerManager } = await import("../server-manager.ts");
       const manager = new McpServerManager();
 
@@ -689,7 +690,7 @@ describe("McpServerManager 2026-07-28 features", () => {
       // Register listener with scoped key
       manager.registerProgressListener(TEST_SERVER, "token123", handler);
 
-      // Simulate the attachProgressNotificationHandler being called with a mock client
+      // Simulate the _attachProgressNotificationHandler being called with a mock client
       // We invoke the private method directly to test the notification handler logic
       const mockClient = {
         setNotificationHandler: vi.fn((method, handler) => {
@@ -699,8 +700,10 @@ describe("McpServerManager 2026-07-28 features", () => {
           }
         }),
       };
-      // @ts-expect-error - testing private method
-      manager.attachProgressNotificationHandler(TEST_SERVER, mockClient);
+      (manager as any)._attachProgressNotificationHandler(
+        TEST_SERVER,
+        mockClient,
+      );
 
       // Simulate a progress notification arriving
       const notification = {

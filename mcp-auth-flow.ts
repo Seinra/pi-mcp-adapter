@@ -12,7 +12,11 @@ import {
   type AuthOptions,
 } from "@modelcontextprotocol/client"
 import open from "open"
-import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import {
+  getOAuthCallbackPort,
+  McpOAuthProvider,
+  type McpOAuthConfig,
+} from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -27,7 +31,6 @@ import {
   hasStoredTokens,
   clearAllCredentials,
   clearClientInfo,
-  clearTokens,
   clearCodeVerifier,
   getOAuthState,
   clearOAuthState,
@@ -309,14 +312,66 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   }
 }
 
+/** Default timeout for each outbound HTTP request the SDK issues during OAuth. */
+const DEFAULT_OAUTH_REQUEST_TIMEOUT_MS = 30_000
+const MAX_OAUTH_REQUEST_TIMEOUT_MS = 2_147_483_647
+
+function resolveOAuthRequestTimeoutMs(): number {
+  const raw = process.env.PI_MCP_OAUTH_REQUEST_TIMEOUT_MS
+  const parsed = raw === undefined ? Number.NaN : Number(raw)
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_OAUTH_REQUEST_TIMEOUT_MS ? parsed : DEFAULT_OAUTH_REQUEST_TIMEOUT_MS
+}
+
+/**
+ * fetch bound to both the owning runtime/options signal and a per-request
+ * timeout. The MCP SDK issues discovery, dynamic client registration,
+ * token-exchange, and refresh requests through this during OAuth; without a
+ * bound timeout a stalled endpoint hangs until the OS TCP timeout (~2 minutes).
+ */
+function authFetch(signal: AbortSignal | undefined): (url: string | URL, init?: RequestInit) => Promise<Response> {
+  return (url, init) => {
+    const timeoutSignal = AbortSignal.timeout(resolveOAuthRequestTimeoutMs())
+    const combined = combineAbortSignals(signal, timeoutSignal, init?.signal ?? undefined)
+    return fetch(url, { ...init, ...(combined ? { signal: combined } : {}) })
+  }
+}
+
 type OAuthRedirectTarget =
-  | { mode: "local"; port: number; callbackHost: string; callbackPath: string }
+  | {
+    mode: "local"
+    port?: number
+    callbackHost: string
+    callbackPath: string
+    dynamicPort: boolean
+    resolveRedirectUri: (port: number) => string
+  }
   | { mode: "manual" }
 
 function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
+  const dynamicPortPlaceholder = "{port}"
+  const placeholderCount = redirectUri.split(dynamicPortPlaceholder).length - 1
+  if (placeholderCount > 1) {
+    throw new Error("OAuth redirectUri may contain at most one {port} placeholder")
+  }
+
+  let parsedRedirectUri = redirectUri
+  const dynamicPort = placeholderCount === 1
+  if (dynamicPort) {
+    const authorityStart = redirectUri.indexOf("://") + 3
+    const pathStart = redirectUri.slice(authorityStart).search(/[/?#]/)
+    const authorityEnd = pathStart === -1 ? redirectUri.length : authorityStart + pathStart
+    const authority = redirectUri.slice(authorityStart, authorityEnd)
+    if (authorityStart < 3 || !authority.endsWith(`:${dynamicPortPlaceholder}`)) {
+      throw new Error("OAuth redirectUri {port} placeholder must be the loopback URI port")
+    }
+    // Parse with a real port, then replace the placeholder only after the OS
+    // assigns the callback listener's port.
+    parsedRedirectUri = redirectUri.replace(dynamicPortPlaceholder, "1")
+  }
+
   let url: URL
   try {
-    url = new URL(redirectUri)
+    url = new URL(parsedRedirectUri)
   } catch (error) {
     throw new Error(`Invalid OAuth redirectUri: ${redirectUri}`, { cause: error })
   }
@@ -331,6 +386,9 @@ function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
 
   const hostname = url.hostname.toLowerCase()
   const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
+  if (dynamicPort && (url.protocol !== "http:" || !isLocalhost)) {
+    throw new Error("OAuth redirectUri {port} placeholder is allowed only for an http:// localhost or loopback URI")
+  }
   if (url.port) {
     const parsedPort = Number.parseInt(url.port, 10)
     if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
@@ -354,7 +412,16 @@ function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
   }
 
   const callbackHost = hostname === "[::1]" ? "::1" : hostname
-  return { mode: "local", port, callbackHost, callbackPath: url.pathname }
+  return {
+    mode: "local",
+    ...(dynamicPort ? {} : { port }),
+    callbackHost,
+    callbackPath: url.pathname,
+    dynamicPort,
+    resolveRedirectUri: assignedPort => dynamicPort
+      ? redirectUri.replace(dynamicPortPlaceholder, String(assignedPort))
+      : redirectUri,
+  }
 }
 
 /**
@@ -392,7 +459,7 @@ export async function startAuth(
     try {
       const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
       throwIfAborted(signal)
-      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
+      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn: authFetch(signal) }), signal)
       throwIfAborted(signal)
       if (result !== "AUTHORIZED") {
         throw new UnauthorizedError("Failed to authorize")
@@ -415,14 +482,23 @@ export async function startAuth(
   if (!manualRedirect) {
     try {
       await ensureCallbackServer({
-        strictPort: Boolean(config.clientId) || config.redirectUri !== undefined,
+        strictPort: redirectTarget?.mode === "local"
+          ? !redirectTarget.dynamicPort
+          : Boolean(config.clientId),
         oauthState,
         reserveState: true,
         ...(redirectTarget?.mode === "local"
-          ? { port: redirectTarget.port, callbackHost: redirectTarget.callbackHost, callbackPath: redirectTarget.callbackPath }
+          ? {
+            ...(redirectTarget.port !== undefined ? { port: redirectTarget.port } : {}),
+            callbackHost: redirectTarget.callbackHost,
+            callbackPath: redirectTarget.callbackPath,
+          }
           : {}),
       })
       throwIfAborted(signal)
+      if (redirectTarget?.mode === "local" && redirectTarget.dynamicPort) {
+        config.redirectUri = redirectTarget.resolveRedirectUri(getOAuthCallbackPort())
+      }
     } catch (error) {
       releaseCallbackServer(oauthState)
       try {
@@ -450,9 +526,12 @@ export async function startAuth(
         await clearOAuthState(serverName, authStorageOptions)
       } else {
         const redirectUris = storedAuth.clientInfo.redirectUris
-        if (!Array.isArray(redirectUris) || !redirectUris.includes(authProvider.redirectUrl ?? "")) {
+        const redirectUriMatches = Array.isArray(redirectUris)
+          && redirectUris.includes(authProvider.redirectUrl ?? "")
+        if (!redirectUriMatches && !storedAuth.tokens.refreshToken) {
+          // A stale redirect URI only blocks the interactive leg; refresh does
+          // not send redirect_uri, so keep refresh-capable credentials intact.
           clearClientInfo(serverName, authStorageOptions)
-          clearTokens(serverName, authStorageOptions)
           clearCodeVerifier(serverName, authStorageOptions)
           await clearOAuthState(serverName, authStorageOptions)
         }
@@ -463,7 +542,7 @@ export async function startAuth(
 
     const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
     throwIfAborted(signal)
-    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
+    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn: authFetch(signal) }), signal)
     throwIfAborted(signal)
     if (result === "AUTHORIZED") {
       authProvider.deactivate()
@@ -801,6 +880,7 @@ export async function completeAuth(
       authorizationCode: code,
       ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
+      fetchFn: authFetch(signal),
     }), signal)
     throwIfAborted(signal)
     if (result !== "AUTHORIZED") {
@@ -994,6 +1074,7 @@ export async function getValidToken(
           serverUrl,
           ...discovery,
           ...(options.skipIssuerMetadataValidation === true ? { skipIssuerMetadataValidation: true } : {}),
+          fetchFn: authFetch(signal),
         }), signal)
         throwIfAborted(signal)
         if (result !== "AUTHORIZED") {

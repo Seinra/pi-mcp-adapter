@@ -150,7 +150,7 @@ const parameters = Type.Object({
   tool: Type.String({ description: "Underlying MCP tool name to call on this server." }),
   args: Type.Optional(Type.Object({}, {
     additionalProperties: true,
-    description: "Arguments for the underlying tool. The exact shape depends on the tool being called; use mcp({ describe: 'server/tool' }) to inspect.",
+    description: "Arguments for the underlying tool. When mcp is available, use mcp({ search: '...' }) to inspect schemas; for unique names use mcp({ describe: 'tool_name' }) with the exact tool name returned by search.",
   })),
 });
 
@@ -181,8 +181,8 @@ export interface SyncNamespaceProxyToolsResult {
 function createNamespaceRenderCall(renderOptions: McpToolRenderOptions, serverName: string) {
   const renderCall = createMcpProxyToolCallRenderer(renderOptions);
   return (args: { tool?: string; args?: Record<string, unknown> }, theme?: RenderTheme, context?: McpToolRenderContext) => renderCall({
-    ...(args.tool !== undefined ? { tool: args.tool } : {}),
-    ...(args.args !== undefined ? { args: args.args } : {}),
+    ...(args.tool === undefined ? {} : { tool: args.tool }),
+    ...(args.args === undefined ? {} : { args: args.args }),
     server: serverName,
   }, theme, context);
 }

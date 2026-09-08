@@ -109,7 +109,10 @@ export function saveMetadataCache(cache: MetadataCache): void {
   renameSync(tmpPath, cachePath);
 }
 
-export function computeServerHash(definition: ServerEntry, environment: NodeJS.ProcessEnv = process.env): string {
+export function computeServerHash(
+  definition: ServerEntry,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
   // Hash only fields that affect server identity and tool/resource output.
   // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
   // that don't change which tools a server exposes.
@@ -123,9 +126,17 @@ export function computeServerHash(definition: ServerEntry, environment: NodeJS.P
     headers: interpolateEnvRecord(definition.headers, environment),
     requestHeadersCommand: definition.requestHeadersCommand
       ? {
-          command: interpolateEnvVars(definition.requestHeadersCommand.command, environment),
-          args: definition.requestHeadersCommand.args?.map((argument) => interpolateEnvVars(argument, environment)),
-          env: interpolateEnvRecord(definition.requestHeadersCommand.env, environment),
+          command: interpolateEnvVars(
+            definition.requestHeadersCommand.command,
+            environment,
+          ),
+          args: definition.requestHeadersCommand.args?.map((argument) =>
+            interpolateEnvVars(argument, environment),
+          ),
+          env: interpolateEnvRecord(
+            definition.requestHeadersCommand.env,
+            environment,
+          ),
           timeoutMs: definition.requestHeadersCommand.timeoutMs,
         }
       : undefined,
@@ -318,6 +329,9 @@ export function reconstructToolMetadata(
       ...(tool.inputSchema === undefined
         ? {}
         : { inputSchema: tool.inputSchema }),
+      ...(tool.outputSchema === undefined
+        ? {}
+        : { outputSchema: tool.outputSchema }),
       ...(tool.uiResourceUri === undefined
         ? {}
         : { uiResourceUri: tool.uiResourceUri }),
@@ -417,6 +431,9 @@ export function serializeTools(tools: McpTool[]): CachedTool[] {
         name: t.name,
         ...(t.description === undefined ? {} : { description: t.description }),
         ...(t.inputSchema === undefined ? {} : { inputSchema: t.inputSchema }),
+        ...(t.outputSchema === undefined
+          ? {}
+          : { outputSchema: t.outputSchema }),
         ...(t.ttlMs === undefined ? {} : { ttlMs: t.ttlMs }),
         ...(t.cacheScope === undefined ? {} : { cacheScope: t.cacheScope }),
         ...(uiResourceUri === undefined ? {} : { uiResourceUri }),

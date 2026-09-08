@@ -109,7 +109,7 @@ describe("mcp-auth storage paths", () => {
       const rel = relative(authDir, filePath);
       expect(rel.startsWith("..")).toBe(false);
       expect(isAbsolute(rel)).toBe(false);
-      expect(rel).toMatch(/^sha256-[a-f0-9]{64}\/tokens\.json$/);
+      expect(rel).toMatch(/^sha256-[a-f0-9]{64}[\\/]tokens\.json$/);
       expect(existsSync(filePath)).toBe(false);
     }
 

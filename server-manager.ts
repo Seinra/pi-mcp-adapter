@@ -1103,7 +1103,12 @@ export class McpServerManager {
       const stdioTransport = new StdioClientTransport({
         command,
         args,
-        env: resolveEnv(definition.env, name, definition.literalEnv === true),
+        env: resolveEnv(
+          definition.env,
+          name,
+          definition.literalEnv === true,
+          definition.inheritEnv !== false,
+        ),
         ...(cwd === undefined ? {} : { cwd }),
         stderr: definition.debug ? "inherit" : "pipe",
       });
@@ -1177,10 +1182,10 @@ export class McpServerManager {
         );
       }
       this.attachAdapterNotificationHandlers(name, client);
-      // NOTE: attachProgressNotificationHandler is intentionally NOT called for
+      // NOTE: _attachProgressNotificationHandler is intentionally NOT called for
       // progress notifications because it conflicts with the SDK's internal
       // progress handling (which uses options.onprogress per-request).
-      // this.attachProgressNotificationHandler(name, client);
+      // this._attachProgressNotificationHandler(name, client);
 
       const instructions = client.getInstructions?.();
       const protocolEra = client.getProtocolEra?.();
@@ -1379,9 +1384,7 @@ export class McpServerManager {
     }
   }
 
-  private buildClientCapabilities(
-    protocolVersion?: string,
-  ): Record<string, unknown> {
+  private buildClientCapabilities(): Record<string, unknown> {
     const caps: Record<string, unknown> = {
       // Upstream MCP Apps UI capability (#466): preserved alongside the
       // legacy-default restore; unrelated to protocol-era negotiation.
@@ -1391,8 +1394,10 @@ export class McpServerManager {
         },
       },
     };
-    // Sampling OMITTED when protocolVersion === "2026-07-28" (P0 Fix)
-    if (this.samplingConfig && protocolVersion !== MODERN_PROTOCOL_VERSION) {
+    // Fork: always declare sampling when samplingConfig exists, including
+    // pinned 2026-07-28 — the SDK's assertRequestHandlerCapability throws
+    // when registering our sampling-handler without the declared capability.
+    if (this.samplingConfig) {
       caps.sampling = {};
     }
     if (this.elicitationConfig) {
@@ -1408,18 +1413,7 @@ export class McpServerManager {
     serverName: string,
     definition: ServerDefinition,
   ): Client {
-    // Resolve protocol version for capability negotiation (P0 Fix + T06)
-    let protocolVersion: string | undefined;
-    if (definition.protocolVersion === MODERN_PROTOCOL_VERSION) {
-      protocolVersion = MODERN_PROTOCOL_VERSION;
-    } else if (definition.protocolVersion === "legacy") {
-      protocolVersion = "legacy";
-    } else if (definition.protocolVersion === "auto") {
-      // Auto-negotiated; we don't know yet at client creation time
-      // Pass undefined — sampling will be included (legacy-safe)
-      protocolVersion = undefined;
-    }
-    const capabilities = this.buildClientCapabilities(protocolVersion);
+    const capabilities = this.buildClientCapabilities();
     const versionNegotiation = resolveVersionNegotiation(definition);
     let client: Client;
     client = new Client(
@@ -2174,7 +2168,7 @@ export class McpServerManager {
    * server-initiated progress not tied to a request, but scoped to avoid
    * cross-server token collisions.
    */
-  private attachProgressNotificationHandler(
+  private _attachProgressNotificationHandler(
     serverName: string,
     client: Client,
   ): void {
@@ -2392,10 +2386,13 @@ function resolveEnv(
   env: Record<string, string> | undefined,
   serverName: string,
   literalEnv = false,
+  inheritEnv = true,
 ): Record<string, string> {
   const resolved: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) resolved[key] = value;
+  if (inheritEnv) {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) resolved[key] = value;
+    }
   }
   if (literalEnv) return env ? { ...resolved, ...env } : resolved;
 

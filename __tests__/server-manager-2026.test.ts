@@ -62,7 +62,7 @@ describe("McpServerManager 2026-07-28 features", () => {
     vi.restoreAllMocks();
   });
 
-  describe("buildClientCapabilities behavior", () => {
+  describe("buildClientCapabilities protocolVersion behavior", () => {
     let McpServerManager: any;
 
     beforeEach(async () => {
@@ -70,7 +70,7 @@ describe("McpServerManager 2026-07-28 features", () => {
       McpServerManager = mod.McpServerManager;
     });
 
-    it("includes sampling even for modern pinned connections", () => {
+    it("omits sampling when protocolVersion is '2026-07-28'", () => {
       const manager = new McpServerManager();
       manager.setSamplingConfig({
         autoApprove: true,
@@ -79,12 +79,12 @@ describe("McpServerManager 2026-07-28 features", () => {
         getSignal: () => undefined,
       });
 
-      const caps = manager.buildClientCapabilities();
-      expect(caps).toHaveProperty("sampling");
-      expect(caps.sampling).toEqual({});
+      const caps = manager.buildClientCapabilities("2026-07-28");
+      expect(caps).not.toHaveProperty("sampling");
+      expect(caps).toEqual({});
     });
 
-    it("includes sampling when sampling config exists", () => {
+    it("includes sampling when protocolVersion is 'legacy' and sampling config exists", () => {
       const manager = new McpServerManager();
       manager.setSamplingConfig({
         autoApprove: true,
@@ -93,15 +93,29 @@ describe("McpServerManager 2026-07-28 features", () => {
         getSignal: () => undefined,
       });
 
-      const caps = manager.buildClientCapabilities();
+      const caps = manager.buildClientCapabilities("legacy");
       expect(caps).toHaveProperty("sampling");
       expect(caps.sampling).toEqual({});
     });
 
-    it("omits sampling when no sampling config exists regardless of protocol era", () => {
+    it("includes sampling when protocolVersion is undefined and sampling config exists", () => {
+      const manager = new McpServerManager();
+      manager.setSamplingConfig({
+        autoApprove: true,
+        modelRegistry: {} as any,
+        getCurrentModel: () => undefined,
+        getSignal: () => undefined,
+      });
+
+      const caps = manager.buildClientCapabilities(undefined);
+      expect(caps).toHaveProperty("sampling");
+      expect(caps.sampling).toEqual({});
+    });
+
+    it("omits sampling when no sampling config exists regardless of protocolVersion", () => {
       const manager = new McpServerManager();
 
-      const caps = manager.buildClientCapabilities();
+      const caps = manager.buildClientCapabilities("legacy");
       expect(caps).not.toHaveProperty("sampling");
     });
 
@@ -109,7 +123,7 @@ describe("McpServerManager 2026-07-28 features", () => {
       const manager = new McpServerManager();
       manager.setElicitationConfig({ allowUrl: true, ui: {} as any });
 
-      const caps = manager.buildClientCapabilities();
+      const caps = manager.buildClientCapabilities("2026-07-28");
       expect(caps).toHaveProperty("elicitation");
       expect(caps.elicitation).toEqual({ form: {}, url: {} });
     });

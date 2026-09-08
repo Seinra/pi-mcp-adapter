@@ -6,17 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-    
-### Breaking changes
-    
-- MCP legacy protocol mode removed: `protocolVersion` now accepts only a pinned `"2026-07-28"` (new default — every connection pins the modern revision) or explicit `"auto"` (SDK conservative negotiation; it offers legacy-era versions during handshake and fails against strict modern-only servers). Configs that set `protocolVersion: "legacy"` must drop the field.
-- SSE transport fallback removed: Streamable HTTP failures now surface directly instead of silently retrying over SSE. `httpTransport` still pins an explicit transport for Agent Plugins.
-- Plaintext `tokens.json` one-time import removed: credentials are read from the OS credential store only. Keychain/Credential Manager users are unaffected; anyone still on a pre-2.x plaintext entry must re-authenticate once.
-- npx v1 cache cleanup dropped on startup; stale v1 cache files are simply ignored.
-    
+
+### Changed
+
+- Legacy protocol negotiation is the default again: unset `protocolVersion` skips the modern handshake probe. `"auto"` and `"2026-07-28"` stay as explicit opt-ins. The byte-level 2026 envelope reshape is unchanged.
+
 ### Added
 
-- Per-server MCP 2026-07-28 support: pinned modern connections declare the sampling capability while it remains functional in the protocol's deprecation window (handler registration requires the declared capability), structured content and result metadata (`structuredContent`, `outputSchema`, `resultType`, `serverInfo`) surface through proxy and direct-tool results, resource templates map with pagination and SDK fallback, completions expose a capability-gated API on `McpServerManager`, and progress notifications use server-scoped token listeners bridged through the SDK's per-request `onprogress` callback.
+- Per-server MCP 2026-07-28 support: pinned modern connections omit the deprecated sampling capability, structured content and result metadata (`structuredContent`, `outputSchema`, `resultType`, `serverInfo`) surface through proxy and direct-tool results, resource templates map with pagination and SDK fallback, completions expose a capability-gated API on `McpServerManager`, and progress notifications use server-scoped token listeners bridged through the SDK's per-request `onprogress` callback.
 - Cached tool metadata honors server-advertised `ttlMs`/`cacheScope` hints: an entry expires at its fetch time plus the tightest declared TTL (result-level list hints or per-tool stamps) instead of serving stale catalogs until the default max age.
 
 ### Fixed
@@ -24,12 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HTTP client connection now reports an invalid server URL cleanly instead of leaking a raw `TypeError` when a configured URL fails parsing.
 
 ### Added
+
 - The `/mcp` panel now supports enabling and disabling servers in place with `ctrl+d` on a server row. Saving persists the `disabled` flag to the project Pi layer and reloads the session, matching `/mcp disable` / `/mcp enable`. Thanks to [@ericykim](https://github.com/ericykim) for PR #479.
 
 ### Changed
+
 - `/mcp setup` now lets users choose project `.mcp.json` or global `~/.config/mcp/mcp.json` as the write target for new shared MCP servers, while identifying Pi-owned files and compatibility inputs as advanced layers. The bundled `mcp-scripting` skill is manual-only by default. Thanks to [@w-winter](https://github.com/w-winter) for #477.
 
 ### Fixed
+
 - Hardened MCP 2026 multi-round input flows across proxy, direct, resource, and UI-resource calls, with actionable no-UI errors and cancellation cleanup.
 - Hardened MCP 2026-07-28 catalog listens with visible drop/recovery state, bounded re-listen on activity, resource update signals for open UIs, and quiet metadata/cache refreshes. (#468)
 - MCP App views now load through a separate loopback sandbox proxy origin so storage APIs work without exposing host session capabilities. Thanks to [@drewbitt](https://github.com/drewbitt) for #480.
@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.31.0] - 2026-08-28
 
 ### Highlights
+
 - MCP Apps-aware servers can now recognize Pi as a UI-capable host and expose interactive resources.
 - UI capability advertising works consistently across legacy and modern MCP protocol negotiation.
 - Manual OAuth callback completion now supports HTTPS redirect URLs for pre-registered clients.
@@ -54,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.30.0] - 2026-08-28
 
 ### Highlights
+
 - Other extensions can safely inspect one runtime MCP server without seeing the whole MCP config.
 - OAuth setup works better with providers that publish authorization metadata at a custom URL.
 - MCP tool names are safer for providers, including servers with non-ASCII names.
@@ -74,19 +76,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.29.0] - 2026-08-26
 
 ### Highlights
+
 - `/mcp setup` can now add Parallel Search as an opt-in preset.
 - Users can try web search and page fetching without first creating an API key.
 - MCP status updates work better in non-TUI hosts that provide plain theme values.
 
 ### Added
+
 - Added an opt-in Parallel Search preset to `/mcp setup` for web search and page fetching without an API key. Thanks to [@georgeatparallel](https://github.com/georgeatparallel) for PR #448.
 
 ### Fixed
+
 - MCP status updates now use plain text when a non-TUI host provides a theme without styling methods. Thanks to [@jinnnyang](https://github.com/jinnnyang) for #449.
 
 ## [2.28.0] - 2026-08-26
 
 ### Highlights
+
 - MCP connections are less fragile when servers fail, recover, move slowly, or refresh their catalogs.
 - Direct MCP tools are safer to expose, with stricter input checks and bounded result details when hosts opt in.
 - Other Pi extensions can register MCP servers at runtime without sharing module state.
@@ -94,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Package installs and public helper imports are easier to use from downstream hosts.
 
 ### Added
+
 - Persistent metadata cache entries now honor server `ttlMs` hints without extending the default max age. Thanks to [@Seinra](https://github.com/Seinra) for #431.
 - Proxy tool calls now forward server progress notifications to the interactive UI. Thanks to [@Seinra](https://github.com/Seinra) for PR #440 and for mapping the area in #431.
 - Added a pure `mcp:` reference resolver API for consumers that validate adapter tool names from explicit config and cache inputs. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for PR #420.
@@ -102,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Embedding hosts can import the configuration loader and metadata cache helpers from public package subpaths, and can validate cached metadata against an explicit private process environment.
 
 ### Fixed
+
 - Runtime MCP registration now works across separately loaded Pi extensions through a versioned shared event contract. Thanks to [@fmoda3](https://github.com/fmoda3) for #443.
 - Stdio MCP startup errors now identify a configured missing or non-directory `cwd` instead of blaming the executable. Thanks to [@SoyElf](https://github.com/SoyElf) for #442.
 - Package installs with `--omit=dev` no longer run the public helper build during `prepare`; Git installs and package tarballs still include the built public exports. Thanks to [@KripaMishra](https://github.com/KripaMishra) for #441.

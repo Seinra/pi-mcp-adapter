@@ -84,7 +84,8 @@ describe("OAuth credential-entry cache — foundation", () => {
       expect(() => getAuthEntry("counted")).toThrow();
       expect(getTestAuthSecretStoreReadCount()).toBe(1);
     }
-    if (recoveryBefore === undefined) delete process.env[DISABLE_KEYRING_RECOVERY_ENV];
+    if (recoveryBefore === undefined)
+      delete process.env[DISABLE_KEYRING_RECOVERY_ENV];
     else process.env[DISABLE_KEYRING_RECOVERY_ENV] = recoveryBefore;
     process.env[STORE_ENV] = "memory";
   });
@@ -95,7 +96,6 @@ describe("OAuth credential-entry cache — foundation", () => {
     expect(process.env[DISABLE_ENV]).toBeUndefined();
     expect(process.env[RECOVERY_OVERRIDE_ENV]).toBe(recoveryBefore);
   });
-
 
   it("restores the suite-wide disable after an opt-in test", () => {
     expect(process.env[DISABLE_ENV]).toBe("1");
@@ -131,14 +131,20 @@ describe("OAuth credential-entry cache — coherence", () => {
     removeAuthEntry("entry");
     const beforeAbsentRead = getTestAuthSecretStoreReadCount();
     expect(getAuthEntry("entry")).toBeUndefined();
-    expect(getTestAuthSecretStoreReadCount() - beforeAbsentRead).toBeGreaterThan(0);
+    expect(
+      getTestAuthSecretStoreReadCount() - beforeAbsentRead,
+    ).toBeGreaterThan(0);
   });
 
-  it("isolates nested mutations and shares the cache with status inspection", () => {
-    saveAuthEntry("aliased", {
-      tokens: { accessToken: "a" },
-      clientInfo: { clientId: "c", redirectUris: ["https://a.example"] },
-    }, SERVER_URL);
+  it("isolates nested mutations and bypasses status inspection", () => {
+    saveAuthEntry(
+      "aliased",
+      {
+        tokens: { accessToken: "a" },
+        clientInfo: { clientId: "c", redirectUris: ["https://a.example"] },
+      },
+      SERVER_URL,
+    );
     enableAuthEntryCache();
     resetAuthEntryCache();
     const entry = getAuthEntry("aliased")!;
@@ -154,16 +160,14 @@ describe("OAuth credential-entry cache — coherence", () => {
     const before = getTestAuthSecretStoreReadCount();
     inspectAuthForUrl("aliased", SERVER_URL);
     inspectAuthForUrl("aliased", SERVER_URL);
-    // Status inspection reuses the ordinary read cache: one store read warms it.
-    expect(getTestAuthSecretStoreReadCount() - before).toBe(1);
+    expect(getTestAuthSecretStoreReadCount() - before).toBe(2);
 
     const beforeOrdinaryRead = getTestAuthSecretStoreReadCount();
     expect(getAuthEntry("aliased")).toBeDefined();
-    expect(getTestAuthSecretStoreReadCount() - beforeOrdinaryRead).toBe(0);
+    expect(getTestAuthSecretStoreReadCount() - beforeOrdinaryRead).toBe(1);
   });
 
-
-  it("reuses the ordinary-read cache during status inspection", () => {
+  it("keeps inspection uncached after an ordinary read warms the cache", () => {
     saveAuthEntry("inspected", { tokens: { accessToken: "a" } }, SERVER_URL);
     enableAuthEntryCache();
     resetAuthEntryCache();
@@ -172,7 +176,7 @@ describe("OAuth credential-entry cache — coherence", () => {
     const before = getTestAuthSecretStoreReadCount();
 
     expect(inspectAuthForUrl("inspected", SERVER_URL).status).toBe("present");
-    expect(getTestAuthSecretStoreReadCount() - before).toBe(0);
+    expect(getTestAuthSecretStoreReadCount() - before).toBe(1);
   });
 
   it("does not cache store failures and reconstructs chunked entries once", () => {
@@ -183,14 +187,17 @@ describe("OAuth credential-entry cache — coherence", () => {
     process.env[STORE_ENV] = "memory";
     expect(getAuthEntry("failing")).toBeUndefined();
 
-    saveAuthEntry("chunked", { tokens: { accessToken: "x".repeat(5000) } }, SERVER_URL);
+    saveAuthEntry(
+      "chunked",
+      { tokens: { accessToken: "x".repeat(5000) } },
+      SERVER_URL,
+    );
     resetAuthEntryCache();
     getAuthEntry("chunked");
     const afterFirst = getTestAuthSecretStoreReadCount();
     expect(getAuthEntry("chunked")?.tokens?.accessToken).toHaveLength(5000);
     expect(getTestAuthSecretStoreReadCount()).toBe(afterFirst);
   });
-
 
   it("leaves every read going to the store when the gate is off", () => {
     saveAuthEntry("gated", { tokens: { accessToken: "a" } }, SERVER_URL);
@@ -204,16 +211,23 @@ describe("OAuth credential-entry cache — coherence", () => {
 
   it("normalizes publication exactly as a later store reload does", () => {
     enableAuthEntryCache();
-    saveAuthEntry("normalized", {
-      tokens: { accessToken: "a", unexpected: "discard" },
-      unexpected: true,
-    } as unknown as AuthEntry, SERVER_URL);
+    saveAuthEntry(
+      "normalized",
+      {
+        tokens: { accessToken: "a", unexpected: "discard" },
+        unexpected: true,
+      } as unknown as AuthEntry,
+      SERVER_URL,
+    );
 
     const onHit = getAuthEntry("normalized");
     resetAuthEntryCache();
     const onMiss = getAuthEntry("normalized");
 
-    expect(onHit).toEqual({ tokens: { accessToken: "a" }, serverUrl: SERVER_URL });
+    expect(onHit).toEqual({
+      tokens: { accessToken: "a" },
+      serverUrl: SERVER_URL,
+    });
     expect(onMiss).toEqual(onHit);
   });
 });
@@ -264,7 +278,6 @@ describe("OAuth credential-entry cache — invalidation", () => {
     expect(getAuthEntry("keep")?.tokens?.accessToken).toBe("k");
     expect(getTestAuthSecretStoreReadCount() - beforeDisabledRead).toBe(1);
   });
-
 
   it("evicts a removed credential even when the gate is turned off", () => {
     enableAuthEntryCache();

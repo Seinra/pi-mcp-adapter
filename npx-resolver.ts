@@ -1,5 +1,18 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  closeSync,
+  unlinkSync,
+} from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
@@ -7,7 +20,8 @@ import crossSpawn from "cross-spawn";
 
 const CACHE_VERSION = 2;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const EXACT_PACKAGE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+const EXACT_PACKAGE_VERSION_RE =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 interface NpxCacheEntry {
   resolvedBin: string;
@@ -44,40 +58,61 @@ export async function resolveNpxBinary(
   signal?: AbortSignal,
 ): Promise<NpxResolution | null> {
   throwIfAborted(signal);
-  const parsed = command === "npx"
-    ? parseNpxArgs(args)
-    : command === "npm"
-      ? parseNpmExecArgs(args)
-      : null;
+  const parsed =
+    command === "npx"
+      ? parseNpxArgs(args)
+      : command === "npm"
+        ? parseNpmExecArgs(args)
+        : null;
 
   if (!parsed) return null;
 
   const packageSpec = parsePackageSpec(parsed.packageSpec);
-  const cacheKey = JSON.stringify([command, parsed.packageSpec, parsed.binName ?? ""]);
+  const cacheKey = JSON.stringify([
+    command,
+    parsed.packageSpec,
+    parsed.binName ?? "",
+  ]);
   const cache = loadCache();
   const cached = cache?.entries?.[cacheKey];
 
   if (
-    cached
-    && Date.now() - cached.resolvedAt < CACHE_TTL_MS
-    && existsSync(cached.resolvedBin)
-    && (!packageSpec?.exactVersion || cached.packageVersion === packageSpec.exactVersion)
+    cached &&
+    Date.now() - cached.resolvedAt < CACHE_TTL_MS &&
+    existsSync(cached.resolvedBin) &&
+    (!packageSpec?.exactVersion ||
+      cached.packageVersion === packageSpec.exactVersion)
   ) {
-    return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
+    return {
+      binPath: cached.resolvedBin,
+      extraArgs: parsed.extraArgs,
+      isJs: cached.isJs,
+    };
   }
 
   const resolved = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
   if (resolved) {
     saveCacheEntry(cacheKey, resolved);
-    return { binPath: resolved.resolvedBin, extraArgs: parsed.extraArgs, isJs: resolved.isJs };
+    return {
+      binPath: resolved.resolvedBin,
+      extraArgs: parsed.extraArgs,
+      isJs: resolved.isJs,
+    };
   }
 
   // Slow path: force npx cache population
   await forceNpxCache(parsed.packageSpec, signal);
-  const resolvedAfterInstall = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
+  const resolvedAfterInstall = resolveFromNpmCache(
+    parsed.packageSpec,
+    parsed.binName,
+  );
   if (resolvedAfterInstall) {
     saveCacheEntry(cacheKey, resolvedAfterInstall);
-    return { binPath: resolvedAfterInstall.resolvedBin, extraArgs: parsed.extraArgs, isJs: resolvedAfterInstall.isJs };
+    return {
+      binPath: resolvedAfterInstall.resolvedBin,
+      extraArgs: parsed.extraArgs,
+      isJs: resolvedAfterInstall.isJs,
+    };
   }
 
   return null;
@@ -123,7 +158,8 @@ function parseNpxArgs(args: string[]): ParsedInvocation | null {
     foundFirstPositional = true;
   }
 
-  const separatedAfter = separatorIndex >= 0 && after.length > 0 ? ["--", ...after] : after;
+  const separatedAfter =
+    separatorIndex >= 0 && after.length > 0 ? ["--", ...after] : after;
 
   if (sawPackageFlag) {
     const binName = positionals[0];
@@ -176,7 +212,10 @@ function parseNpmExecArgs(args: string[]): ParsedInvocation | null {
   return { packageSpec, binName, extraArgs };
 }
 
-function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEntry | null {
+function resolveFromNpmCache(
+  packageSpec: string,
+  binName?: string,
+): NpxCacheEntry | null {
   const cacheDir = getNpmCacheDir();
   if (!cacheDir) return null;
 
@@ -190,7 +229,8 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   const packageJsonPath = join(packageDir, "package.json");
   if (!existsSync(packageJsonPath)) return null;
 
-  let pkg: { bin?: string | Record<string, string>; version?: string } | null = null;
+  let pkg: { bin?: string | Record<string, string>; version?: string } | null =
+    null;
   try {
     pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
       bin?: string | Record<string, string>;
@@ -230,7 +270,9 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   if (!binRel) return null;
 
   const nodeModulesDir = findNodeModulesDir(packageDir);
-  const binLink = chosenBinName ? join(nodeModulesDir, ".bin", chosenBinName) : null;
+  const binLink = chosenBinName
+    ? join(nodeModulesDir, ".bin", chosenBinName)
+    : null;
   let resolvedBin = binLink && existsSync(binLink) ? safeRealpath(binLink) : "";
   if (!resolvedBin) {
     resolvedBin = resolve(packageDir, binRel);
@@ -241,21 +283,24 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   return {
     resolvedBin,
     resolvedAt: Date.now(),
-    ...(pkg?.version !== undefined ? { packageVersion: pkg.version } : {}),
+    ...(pkg?.version === undefined ? {} : { packageVersion: pkg.version }),
     isJs,
   };
 }
 
 const FORCE_CACHE_TIMEOUT_MS = 30_000;
 
-async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise<void> {
+async function forceNpxCache(
+  packageSpec: string,
+  signal?: AbortSignal,
+): Promise<void> {
   throwIfAborted(signal);
   try {
     await new Promise<void>((resolve, reject) => {
       const proc = crossSpawn(
         "npm",
         ["exec", "--yes", "--package", packageSpec, "--", "node", "-e", "1"],
-        { stdio: "ignore" }
+        { stdio: "ignore" },
       );
       const timer = setTimeout(() => {
         proc.kill();
@@ -263,7 +308,11 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
       }, FORCE_CACHE_TIMEOUT_MS);
       const abort = () => {
         proc.kill();
-        reject(signal?.reason instanceof Error ? signal.reason : new Error("MCP request aborted"));
+        reject(
+          signal?.reason instanceof Error
+            ? signal.reason
+            : new Error("MCP request aborted"),
+        );
       };
       signal?.addEventListener("abort", abort, { once: true });
       timer.unref();
@@ -285,7 +334,10 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
   throwIfAborted(signal);
 }
 
-function buildBinCandidates(packageName: string, explicitBin?: string): string[] {
+function buildBinCandidates(
+  packageName: string,
+  explicitBin?: string,
+): string[] {
   const candidates: string[] = [];
   if (explicitBin) candidates.push(explicitBin);
 
@@ -328,7 +380,9 @@ function parsePackageSpec(spec: string): ParsedPackageSpec | null {
   }
 
   if (!packageName) return null;
-  const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
+  const normalizedVersion = requestedVersion
+    ?.replace(/^=/, "")
+    .replace(/^v/i, "");
   return {
     packageName,
     ...(normalizedVersion && EXACT_PACKAGE_VERSION_RE.test(normalizedVersion)
@@ -345,7 +399,11 @@ function defaultBinName(packageName: string): string {
   return packageName;
 }
 
-function findCachedPackageDir(cacheDir: string, packageName: string, exactVersion?: string): string | null {
+function findCachedPackageDir(
+  cacheDir: string,
+  packageName: string,
+  exactVersion?: string,
+): string | null {
   const npxDir = join(cacheDir, "_npx");
   if (!existsSync(npxDir)) return null;
 
@@ -354,8 +412,8 @@ function findCachedPackageDir(cacheDir: string, packageName: string, exactVersio
     : [packageName];
 
   const candidates = readdirSync(npxDir, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => {
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
       const full = join(npxDir, entry.name);
       const mtime = safeStatMtime(full);
       return { name: entry.name, mtime };
@@ -363,12 +421,19 @@ function findCachedPackageDir(cacheDir: string, packageName: string, exactVersio
     .sort((a, b) => b.mtime - a.mtime);
 
   for (const entry of candidates) {
-    const pkgDir = join(npxDir, entry.name, "node_modules", ...packagePathParts);
+    const pkgDir = join(
+      npxDir,
+      entry.name,
+      "node_modules",
+      ...packagePathParts,
+    );
     const packageJsonPath = join(pkgDir, "package.json");
     if (!existsSync(packageJsonPath)) continue;
     if (exactVersion) {
       try {
-        const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version?: unknown };
+        const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+          version?: unknown;
+        };
         if (pkg.version !== exactVersion) continue;
       } catch {
         continue;
@@ -416,7 +481,9 @@ function getNpmCacheDir(): string | null {
     return npmCacheDirCached;
   }
   try {
-    const result = crossSpawn.sync("npm", ["config", "get", "cache"], { encoding: "utf-8" });
+    const result = crossSpawn.sync("npm", ["config", "get", "cache"], {
+      encoding: "utf-8",
+    });
     if (result.status === 0) {
       const path = String(result.stdout).trim();
       npmCacheDirCached = path || null;
@@ -445,7 +512,7 @@ function readNpxCachePayload(cachePath: string): unknown | null {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 
@@ -457,13 +524,20 @@ function toNpxCacheEntry(value: unknown): NpxCacheEntry | null {
   const raw = asRecord(value);
   if (!raw) return null;
   if (typeof raw.resolvedBin !== "string") return null;
-  if (typeof raw.resolvedAt !== "number" || !Number.isFinite(raw.resolvedAt)) return null;
+  if (typeof raw.resolvedAt !== "number" || !Number.isFinite(raw.resolvedAt))
+    return null;
   if (typeof raw.isJs !== "boolean") return null;
-  if (raw.packageVersion !== undefined && typeof raw.packageVersion !== "string") return null;
+  if (
+    raw.packageVersion !== undefined &&
+    typeof raw.packageVersion !== "string"
+  )
+    return null;
   return {
     resolvedBin: raw.resolvedBin,
     resolvedAt: raw.resolvedAt,
-    ...(raw.packageVersion !== undefined ? { packageVersion: raw.packageVersion } : {}),
+    ...(raw.packageVersion === undefined
+      ? {}
+      : { packageVersion: raw.packageVersion }),
     isJs: raw.isJs,
   };
 }
@@ -482,7 +556,27 @@ function toNpxCache(value: unknown): NpxCache | null {
   return { version: CACHE_VERSION, entries };
 }
 
+function clearLegacyCache(): boolean {
+  const cachePath = getNpxCachePath();
+  const raw = asRecord(readNpxCachePayload(cachePath));
+  if (raw?.version !== 1) return false;
+  try {
+    unlinkSync(cachePath);
+  } catch {
+    try {
+      writeFileSync(cachePath, "", "utf-8");
+    } catch {
+      // Cache cleanup is best effort; resolution must still proceed.
+    }
+  }
+  return true;
+}
+
+clearLegacyCache();
+
 function loadCache(): NpxCache | null {
+  if (clearLegacyCache()) return null;
+
   return toNpxCache(readNpxCachePayload(getNpxCachePath()));
 }
 

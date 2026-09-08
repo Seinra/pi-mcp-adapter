@@ -20,10 +20,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
-import {
-  MODERN_PROTOCOL_VERSION,
-  probeMcpEndpoint,
-} from "./mcp-probe.ts";
+import { MODERN_PROTOCOL_VERSION, probeMcpEndpoint } from "./mcp-probe.ts";
 import {
   isServerDisabled,
   type McpTool,
@@ -47,8 +44,16 @@ import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { logger } from "./logger.ts";
 import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
-import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import { inspectAuthForUrl, invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
+import {
+  extractOAuthConfig,
+  supportsOAuth,
+  type McpOAuthRuntime,
+} from "./mcp-auth-flow.ts";
+import {
+  inspectAuthForUrl,
+  invalidateAuthEntryCache,
+  type AuthStorageOptions,
+} from "./mcp-auth.ts";
 import { getBearerTokenForUrl } from "./mcp-bearer-store.ts";
 import {
   registerSamplingHandler,
@@ -74,14 +79,14 @@ import {
   isMcpTraceEnabled,
   type McpTraceWriter,
   type McpTraceObserver,
-      traceTransportKind,
-      wrapTransportWithMcpTrace,
-    } from "./mcp-trace.ts";
-    import {
-      enableReshapingProbeSiblings,
-      installEnvelopeReshaping,
-    } from "./envelope-reshape.ts";
-    import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
+  traceTransportKind,
+  wrapTransportWithMcpTrace,
+} from "./mcp-trace.ts";
+import {
+  enableReshapingProbeSiblings,
+  installEnvelopeReshaping,
+} from "./envelope-reshape.ts";
+import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
@@ -101,30 +106,38 @@ function isUnauthorizedHttpError(error: unknown): boolean {
   );
 }
 
-    /**
-     * Resolve protocol version negotiation for a server definition.
-     *
-     * The default (and an explicit pin) resolves to `{ mode: { pin } }` on the
-     * modern protocol revision: this fork is modern-only, and "auto"'s
-     * conservative fallback offers legacy-era versions that strict
-     * modern-only servers reject. "auto" remains as an explicit opt-in to the
-     * SDK's conservative negotiation.
-     */
-    function resolveVersionNegotiation(
-      definition: ServerDefinition,
-    ): VersionNegotiationOptions {
-      switch (definition.protocolVersion) {
-        case undefined:
-        case MODERN_PROTOCOL_VERSION:
-          return { mode: { pin: MODERN_PROTOCOL_VERSION } };
-        case "auto":
-          return { mode: "auto" };
-        default:
-          throw new Error(
-            `Invalid MCP protocolVersion: ${String(definition.protocolVersion)}`,
-          );
-      }
-    }
+function shouldFallbackToSse(
+  error: unknown,
+  definition: ServerDefinition,
+): boolean {
+  if (definition.protocolVersion === MODERN_PROTOCOL_VERSION) return false;
+  return (
+    error instanceof SdkHttpError && [404, 405, 406, 415].includes(error.status)
+  );
+}
+
+/**
+ * Legacy is the default: undefined/"legacy" sends no negotiation option
+ * (classic initialize, no server/discover probe). "auto" and "2026-07-28"
+ * are explicit opt-ins to modern negotiation or a hard pin.
+ */
+function resolveVersionNegotiation(
+  definition: ServerDefinition,
+): VersionNegotiationOptions | undefined {
+  switch (definition.protocolVersion) {
+    case undefined:
+    case "legacy":
+      return undefined;
+    case "auto":
+      return { mode: "auto" };
+    case MODERN_PROTOCOL_VERSION:
+      return { mode: { pin: MODERN_PROTOCOL_VERSION } };
+    default:
+      throw new Error(
+        `Invalid MCP protocolVersion: ${String(definition.protocolVersion)}`,
+      );
+  }
+}
 
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
   if (Buffer.isBuffer(chunk)) {
@@ -148,13 +161,13 @@ function boundedStderrChunk(chunk: Buffer | string): Buffer {
 function mapSdkResourceTemplates(
   templates:
     | Array<{
-      uriTemplate: string;
-      name: string;
-      description?: string | undefined;
-      mimeType?: string | undefined;
-      _meta?: Record<string, unknown> | undefined;
-      [key: string]: unknown;
-    }>
+        uriTemplate: string;
+        name: string;
+        description?: string | undefined;
+        mimeType?: string | undefined;
+        _meta?: Record<string, unknown> | undefined;
+        [key: string]: unknown;
+      }>
     | undefined,
 ): McpResourceTemplate[] {
   return (templates ?? []).map((t) => {
@@ -187,7 +200,9 @@ export interface ServerConnection {
   definition: ServerDefinition;
   tools: McpTool[];
   /** Cache hints from the server's aggregated tools/list result. */
-  toolListHints?: Partial<Pick<ListToolsResult, "ttlMs" | "cacheScope">> | undefined;
+  toolListHints?:
+    | Partial<Pick<ListToolsResult, "ttlMs" | "cacheScope">>
+    | undefined;
   /** Monotonic guard against older refresh responses replacing newer notifications. */
   toolsRevision?: number;
   resources: McpResource[];
@@ -220,7 +235,10 @@ type UiStreamListener = (
   notification: ServerStreamResultPatchNotification["params"],
 ) => void;
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
-type ListenStateChangedListener = (serverName: string, state: McpListenState) => void;
+type ListenStateChangedListener = (
+  serverName: string,
+  state: McpListenState,
+) => void;
 type ResourceUpdatedListener = (serverName: string, uri: string) => void;
 
 export type ToolRefreshResult =
@@ -229,7 +247,9 @@ export type ToolRefreshResult =
   | "superseded"
   | "refresh-timeout";
 
-type ToolListCacheHints = Partial<Pick<ListToolsResult, "ttlMs" | "cacheScope">>;
+type ToolListCacheHints = Partial<
+  Pick<ListToolsResult, "ttlMs" | "cacheScope">
+>;
 type ToolListResult = { tools: McpTool[]; hints?: ToolListCacheHints };
 
 const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
@@ -254,11 +274,14 @@ export class McpServerManager {
   private samplingConfig: ServerSamplingConfig | undefined;
   private metadataListChangedListener: MetadataListChangedListener | undefined;
   private listenStateChangedListener: ListenStateChangedListener | undefined;
-  private resourceUpdatedListeners = new Map<string, {
-    serverName: string;
-    uri: string;
-    listener: ResourceUpdatedListener;
-  }>();
+  private resourceUpdatedListeners = new Map<
+    string,
+    {
+      serverName: string;
+      uri: string;
+      listener: ResourceUpdatedListener;
+    }
+  >();
   private pendingMetadataPublications = new Map<
     string,
     { connection: ServerConnection; reason: string }
@@ -294,7 +317,9 @@ export class McpServerManager {
     this.metadataListChangedListener = listener;
   }
 
-  setListenStateChangedListener(listener: ListenStateChangedListener | undefined): void {
+  setListenStateChangedListener(
+    listener: ListenStateChangedListener | undefined,
+  ): void {
     this.listenStateChangedListener = listener;
   }
 
@@ -450,8 +475,16 @@ export class McpServerManager {
         );
       }
       this.connections.set(name, connection);
-      this.watchListenSubscription(name, connection, connection.listenSubscription);
-      if ([...this.resourceUpdatedListeners.values()].some(registration => registration.serverName === name)) {
+      this.watchListenSubscription(
+        name,
+        connection,
+        connection.listenSubscription,
+      );
+      if (
+        [...this.resourceUpdatedListeners.values()].some(
+          (registration) => registration.serverName === name,
+        )
+      ) {
         void this.ensureListen(name, connection);
       }
       return connection;
@@ -524,8 +557,14 @@ export class McpServerManager {
 
     await this.ensureListen(name, expectedConnection);
 
-    const requestOptions = this.buildRequestOptions(expectedConnection.definition, signal);
-    const timeout = Math.min(requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS, KEEP_ALIVE_REFRESH_TIMEOUT_MS);
+    const requestOptions = this.buildRequestOptions(
+      expectedConnection.definition,
+      signal,
+    );
+    const timeout = Math.min(
+      requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS,
+      KEEP_ALIVE_REFRESH_TIMEOUT_MS,
+    );
     const healthOptions = {
       ...requestOptions,
       timeout,
@@ -626,7 +665,11 @@ export class McpServerManager {
     }
   }
 
-  private setListenState(name: string, connection: ServerConnection, state: McpListenState): void {
+  private setListenState(
+    name: string,
+    connection: ServerConnection,
+    state: McpListenState,
+  ): void {
     if (connection.listenState === state) return;
     connection.listenState = state;
     if (this.connections.get(name) === connection) {
@@ -638,16 +681,25 @@ export class McpServerManager {
     }
   }
 
-  private catalogListenFilter(connection: ServerConnection): SubscriptionFilter {
+  private catalogListenFilter(
+    connection: ServerConnection,
+  ): SubscriptionFilter {
     const capabilities = connection.client.getServerCapabilities?.();
     return {
       ...(capabilities?.tools?.listChanged ? { toolsListChanged: true } : {}),
-      ...(capabilities?.prompts?.listChanged ? { promptsListChanged: true } : {}),
-      ...(capabilities?.resources?.listChanged ? { resourcesListChanged: true } : {}),
+      ...(capabilities?.prompts?.listChanged
+        ? { promptsListChanged: true }
+        : {}),
+      ...(capabilities?.resources?.listChanged
+        ? { resourcesListChanged: true }
+        : {}),
     };
   }
 
-  private currentListenFilter(name: string, connection: ServerConnection): SubscriptionFilter {
+  private currentListenFilter(
+    name: string,
+    connection: ServerConnection,
+  ): SubscriptionFilter {
     const now = Date.now();
     const recent = connection.recentResourceUris;
     if (recent) {
@@ -655,16 +707,21 @@ export class McpServerManager {
         if (now - touchedAt > RECENT_RESOURCE_TTL_MS) recent.delete(uri);
       }
     }
-    const openResourceUris = [...new Set(
-      [...this.resourceUpdatedListeners.values()]
-        .filter(registration => registration.serverName === name)
-        .map(registration => registration.uri),
-    )].slice(-MAX_RESOURCE_SUBSCRIPTIONS);
+    const openResourceUris = [
+      ...new Set(
+        [...this.resourceUpdatedListeners.values()]
+          .filter((registration) => registration.serverName === name)
+          .map((registration) => registration.uri),
+      ),
+    ].slice(-MAX_RESOURCE_SUBSCRIPTIONS);
     const openSet = new Set(openResourceUris);
     const recentSlots = MAX_RESOURCE_SUBSCRIPTIONS - openResourceUris.length;
-    const recentResourceUris = recentSlots > 0
-      ? [...(recent?.keys() ?? [])].filter(uri => !openSet.has(uri)).slice(-recentSlots)
-      : [];
+    const recentResourceUris =
+      recentSlots > 0
+        ? [...(recent?.keys() ?? [])]
+            .filter((uri) => !openSet.has(uri))
+            .slice(-recentSlots)
+        : [];
     const resourceSubscriptions = [...openResourceUris, ...recentResourceUris];
     return {
       ...this.catalogListenFilter(connection),
@@ -678,20 +735,25 @@ export class McpServerManager {
     subscription: McpSubscription | undefined,
   ): void {
     if (!subscription) return;
-    void subscription.closed.then(cause => {
+    void subscription.closed.then((cause) => {
       if (
         this.stopped ||
         this.connections.get(name) !== connection ||
         connection.status !== "connected" ||
         connection.listenSubscription !== subscription
-      ) return;
+      )
+        return;
       if (cause === "remote") {
         const staleUris = connection.listenFilter?.resourceSubscriptions ?? [];
-        if (staleUris.length > 0) connection.resourceReadRefreshUris = new Set(staleUris);
+        if (staleUris.length > 0)
+          connection.resourceReadRefreshUris = new Set(staleUris);
         connection.listenCatalogStale = true;
         connection.listenRetryAfter = Date.now();
         this.setListenState(name, connection, "dropped");
-      } else if (cause === "graceful" || connection.listenState !== "re-establishing") {
+      } else if (
+        cause === "graceful" ||
+        connection.listenState !== "re-establishing"
+      ) {
         connection.listenStopped = true;
         this.setListenState(name, connection, "not-listening");
       }
@@ -699,14 +761,18 @@ export class McpServerManager {
   }
 
   /** Quietly repairs a modern catalog listen at an existing activity boundary. */
-  async ensureListen(name: string, expectedConnection: ServerConnection): Promise<void> {
+  async ensureListen(
+    name: string,
+    expectedConnection: ServerConnection,
+  ): Promise<void> {
     if (
       this.stopped ||
       this.connections.get(name) !== expectedConnection ||
       expectedConnection.status !== "connected" ||
       expectedConnection.listenStopped ||
       expectedConnection.client.getProtocolEra?.() !== "modern"
-    ) return;
+    )
+      return;
 
     const filter = this.currentListenFilter(name, expectedConnection);
     if (Object.keys(filter).length === 0) {
@@ -719,16 +785,26 @@ export class McpServerManager {
     }
     if ((expectedConnection.listenRetryAfter ?? 0) > Date.now()) return;
 
-    const sameFilter = isDeepStrictEqual(expectedConnection.listenFilter, filter);
+    const sameFilter = isDeepStrictEqual(
+      expectedConnection.listenFilter,
+      filter,
+    );
     if (expectedConnection.listenState === "active" && sameFilter) {
       if (!expectedConnection.listenCatalogStale) return;
       const attempt = (async () => {
         this.setListenState(name, expectedConnection, "re-establishing");
-        const confirmed = await this.reconcileCatalogAfterListen(name, expectedConnection, this.buildRequestOptions(expectedConnection.definition));
-        if (!confirmed) expectedConnection.listenRetryAfter = Date.now() + LISTEN_RETRY_DELAY_MS;
+        const confirmed = await this.reconcileCatalogAfterListen(
+          name,
+          expectedConnection,
+          this.buildRequestOptions(expectedConnection.definition),
+        );
+        if (!confirmed)
+          expectedConnection.listenRetryAfter =
+            Date.now() + LISTEN_RETRY_DELAY_MS;
         this.setListenState(name, expectedConnection, "active");
       })().finally(() => {
-        if (expectedConnection.listenPromise === attempt) delete expectedConnection.listenPromise;
+        if (expectedConnection.listenPromise === attempt)
+          delete expectedConnection.listenPromise;
       });
       expectedConnection.listenPromise = attempt;
       return attempt;
@@ -739,17 +815,26 @@ export class McpServerManager {
       this.setListenState(name, expectedConnection, "re-establishing");
       const previous = expectedConnection.listenSubscription;
       if (previous) await previous.close().catch(() => {});
-      if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") return;
+      if (
+        this.connections.get(name) !== expectedConnection ||
+        expectedConnection.status !== "connected"
+      )
+        return;
       try {
-        const requestOptions = this.buildRequestOptions(expectedConnection.definition);
-        const subscription = await expectedConnection.client.listen(
-          filter,
-          {
-            ...requestOptions,
-            timeout: Math.min(requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS, KEEP_ALIVE_REFRESH_TIMEOUT_MS),
-          },
+        const requestOptions = this.buildRequestOptions(
+          expectedConnection.definition,
         );
-        if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+        const subscription = await expectedConnection.client.listen(filter, {
+          ...requestOptions,
+          timeout: Math.min(
+            requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS,
+            KEEP_ALIVE_REFRESH_TIMEOUT_MS,
+          ),
+        });
+        if (
+          this.connections.get(name) !== expectedConnection ||
+          expectedConnection.status !== "connected"
+        ) {
           await subscription.close().catch(() => {});
           return;
         }
@@ -759,19 +844,34 @@ export class McpServerManager {
         delete expectedConnection.listenRetryAfter;
         this.watchListenSubscription(name, expectedConnection, subscription);
         const confirmed = recoverDroppedListen
-          ? await this.reconcileCatalogAfterListen(name, expectedConnection, requestOptions)
+          ? await this.reconcileCatalogAfterListen(
+              name,
+              expectedConnection,
+              requestOptions,
+            )
           : true;
-        if (!confirmed) expectedConnection.listenRetryAfter = Date.now() + LISTEN_RETRY_DELAY_MS;
+        if (!confirmed)
+          expectedConnection.listenRetryAfter =
+            Date.now() + LISTEN_RETRY_DELAY_MS;
         this.setListenState(name, expectedConnection, "active");
       } catch (error) {
-        if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") return;
-        if (expectedConnection.listenSubscription) await expectedConnection.listenSubscription.close().catch(() => {});
-        expectedConnection.listenRetryAfter = Date.now() + LISTEN_RETRY_DELAY_MS;
+        if (
+          this.connections.get(name) !== expectedConnection ||
+          expectedConnection.status !== "connected"
+        )
+          return;
+        if (expectedConnection.listenSubscription)
+          await expectedConnection.listenSubscription.close().catch(() => {});
+        expectedConnection.listenRetryAfter =
+          Date.now() + LISTEN_RETRY_DELAY_MS;
         this.setListenState(name, expectedConnection, "dropped");
-        logger.debug(`MCP: catalog listen repair failed for ${name}: ${error instanceof Error ? error.message : String(error)}`);
+        logger.debug(
+          `MCP: catalog listen repair failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     })().finally(() => {
-      if (expectedConnection.listenPromise === attempt) delete expectedConnection.listenPromise;
+      if (expectedConnection.listenPromise === attempt)
+        delete expectedConnection.listenPromise;
     });
     expectedConnection.listenPromise = attempt;
     return attempt;
@@ -782,8 +882,14 @@ export class McpServerManager {
     expectedConnection: ServerConnection,
     requestOptions?: CacheableRequestOptions,
   ): Promise<boolean> {
-    const timeout = Math.min(requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS, KEEP_ALIVE_REFRESH_TIMEOUT_MS);
-    const refreshSignal = combineAbortSignals(requestOptions?.signal, AbortSignal.timeout(timeout));
+    const timeout = Math.min(
+      requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS,
+      KEEP_ALIVE_REFRESH_TIMEOUT_MS,
+    );
+    const refreshSignal = combineAbortSignals(
+      requestOptions?.signal,
+      AbortSignal.timeout(timeout),
+    );
     const refreshOptions: CacheableRequestOptions = {
       ...requestOptions,
       timeout,
@@ -795,21 +901,36 @@ export class McpServerManager {
       this.fetchAllResources(expectedConnection.client, refreshOptions, true),
       this.fetchAllPrompts(expectedConnection.client, refreshOptions),
     ]);
-    if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") return false;
+    if (
+      this.connections.get(name) !== expectedConnection ||
+      expectedConnection.status !== "connected"
+    )
+      return false;
 
-    const nextTools = toolResult.status === "fulfilled" ? toolResult.value : undefined;
-    const nextResources = resources.status === "fulfilled" ? resources.value : undefined;
-    const nextPrompts = promptResult.status === "fulfilled" && !promptResult.value.failed ? promptResult.value : undefined;
-    const confirmed = nextTools !== undefined && nextResources !== undefined && nextPrompts !== undefined;
-    const changed = (nextTools !== undefined && (
-      !isDeepStrictEqual(expectedConnection.tools, nextTools.tools) ||
-      !isDeepStrictEqual(expectedConnection.toolListHints, nextTools.hints)
-    )) ||
-      (nextResources !== undefined && !isDeepStrictEqual(expectedConnection.resources, nextResources)) ||
-      (nextPrompts !== undefined && (
-        !isDeepStrictEqual(expectedConnection.prompts, nextPrompts.prompts) ||
-        expectedConnection.promptDiscoveryFailed !== false
-      ));
+    const nextTools =
+      toolResult.status === "fulfilled" ? toolResult.value : undefined;
+    const nextResources =
+      resources.status === "fulfilled" ? resources.value : undefined;
+    const nextPrompts =
+      promptResult.status === "fulfilled" && !promptResult.value.failed
+        ? promptResult.value
+        : undefined;
+    const confirmed =
+      nextTools !== undefined &&
+      nextResources !== undefined &&
+      nextPrompts !== undefined;
+    const changed =
+      (nextTools !== undefined &&
+        (!isDeepStrictEqual(expectedConnection.tools, nextTools.tools) ||
+          !isDeepStrictEqual(
+            expectedConnection.toolListHints,
+            nextTools.hints,
+          ))) ||
+      (nextResources !== undefined &&
+        !isDeepStrictEqual(expectedConnection.resources, nextResources)) ||
+      (nextPrompts !== undefined &&
+        (!isDeepStrictEqual(expectedConnection.prompts, nextPrompts.prompts) ||
+          expectedConnection.promptDiscoveryFailed !== false));
     if (!changed) {
       this.retryPendingMetadataPublication(name, expectedConnection);
       if (confirmed) delete expectedConnection.listenCatalogStale;
@@ -820,9 +941,11 @@ export class McpServerManager {
     if (nextTools !== undefined) {
       expectedConnection.tools = nextTools.tools;
       expectedConnection.toolListHints = nextTools.hints;
-      expectedConnection.toolsRevision = (expectedConnection.toolsRevision ?? 0) + 1;
+      expectedConnection.toolsRevision =
+        (expectedConnection.toolsRevision ?? 0) + 1;
     }
-    if (nextResources !== undefined) expectedConnection.resources = nextResources;
+    if (nextResources !== undefined)
+      expectedConnection.resources = nextResources;
     if (nextPrompts !== undefined) {
       expectedConnection.prompts = nextPrompts.prompts;
       expectedConnection.promptDiscoveryFailed = false;
@@ -834,12 +957,22 @@ export class McpServerManager {
     return confirmed;
   }
 
-  async prepareResourceUse(name: string, uri: string, expectedConnection: ServerConnection): Promise<boolean> {
-    if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") return false;
-    const refreshRead = expectedConnection.listenState === "dropped" ||
+  async prepareResourceUse(
+    name: string,
+    uri: string,
+    expectedConnection: ServerConnection,
+  ): Promise<boolean> {
+    if (
+      this.connections.get(name) !== expectedConnection ||
+      expectedConnection.status !== "connected"
+    )
+      return false;
+    const refreshRead =
+      expectedConnection.listenState === "dropped" ||
       expectedConnection.listenState === "re-establishing" ||
       expectedConnection.resourceReadRefreshUris?.has(uri) === true;
-    const recent = expectedConnection.recentResourceUris ?? new Map<string, number>();
+    const recent =
+      expectedConnection.recentResourceUris ?? new Map<string, number>();
     recent.delete(uri);
     recent.set(uri, Date.now());
     while (recent.size > MAX_RESOURCE_SUBSCRIPTIONS) {
@@ -935,12 +1068,20 @@ export class McpServerManager {
     if (definition.command) {
       client = this.createClient(name, definition);
       let command = definition.command;
-      let args = (definition.args ?? []).map((argument) => interpolateEnvVars(argument));
+      let args = (definition.args ?? []).map((argument) =>
+        interpolateEnvVars(argument),
+      );
       const cwd = resolveConfigPath(definition.cwd) ?? this.defaultCwd;
       if (cwd !== undefined) {
         const cwdStats = statSync(cwd, { throwIfNoEntry: false });
-        if (!cwdStats) throw new Error(`MCP server "${name}" configured cwd does not exist: "${cwd}"`);
-        if (!cwdStats.isDirectory()) throw new Error(`MCP server "${name}" configured cwd is not a directory: "${cwd}"`);
+        if (!cwdStats)
+          throw new Error(
+            `MCP server "${name}" configured cwd does not exist: "${cwd}"`,
+          );
+        if (!cwdStats.isDirectory())
+          throw new Error(
+            `MCP server "${name}" configured cwd is not a directory: "${cwd}"`,
+          );
       }
 
       if (command === "npx" || command === "npm") {
@@ -1057,16 +1198,20 @@ export class McpServerManager {
         lastUsedAt: Date.now(),
         inFlight: 0,
         status: "connected",
-        listenState: protocolEra === "modern"
-          ? autoOpenedSubscription
-            ? "active"
-            : "not-listening"
-          : "legacy",
-        ...(autoOpenedSubscription ? {
-          listenSubscription: autoOpenedSubscription,
-        } : {}),
+        listenState:
+          protocolEra === "modern"
+            ? autoOpenedSubscription
+              ? "active"
+              : "not-listening"
+            : "legacy",
+        ...(autoOpenedSubscription
+          ? {
+              listenSubscription: autoOpenedSubscription,
+            }
+          : {}),
       };
-      if (autoOpenedSubscription) connection.listenFilter = this.catalogListenFilter(connection);
+      if (autoOpenedSubscription)
+        connection.listenFilter = this.catalogListenFilter(connection);
 
       // Reflect the SDK's own close signal in connection status, guarded by
       // identity so a stale connection's late close can never clobber a fresh
@@ -1234,43 +1379,54 @@ export class McpServerManager {
     }
   }
 
-      private buildClientCapabilities() {
-        return {
-          extensions: {
-            "io.modelcontextprotocol/ui": {
-              mimeTypes: [RESOURCE_MIME_TYPE],
-            },
-          },
-          // sampling/createMessage is DEPRECATED in MCP 2026-07-28 but remains
-          // functional during the deprecation window (spec 03-key-changes.md
-          // §14). Declaring it is spec-legal and required for SDK handler
-          // registration coherence: assertRequestHandlerCapability throws SdkError
-          // CapabilityNotSupported when a handler is registered without the
-          // matching capability.
-          ...(this.samplingConfig ? { sampling: {} } : {}),
-          ...(this.elicitationConfig
-            ? {
-                elicitation: {
-                  form: {},
-                  ...(this.elicitationConfig.allowUrl ? { url: {} } : {}),
-                },
-              }
-            : {}),
-        };
-      }
+  private buildClientCapabilities(
+    protocolVersion?: string,
+  ): Record<string, unknown> {
+    const caps: Record<string, unknown> = {
+      // Upstream MCP Apps UI capability (#466): preserved alongside the
+      // legacy-default restore; unrelated to protocol-era negotiation.
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: [RESOURCE_MIME_TYPE],
+        },
+      },
+    };
+    // Sampling OMITTED when protocolVersion === "2026-07-28" (P0 Fix)
+    if (this.samplingConfig && protocolVersion !== MODERN_PROTOCOL_VERSION) {
+      caps.sampling = {};
+    }
+    if (this.elicitationConfig) {
+      caps.elicitation = {
+        form: {},
+        ...(this.elicitationConfig.allowUrl ? { url: {} } : {}),
+      };
+    }
+    return caps;
+  }
 
   private createClient(
     serverName: string,
     definition: ServerDefinition,
   ): Client {
-    const capabilities = this.buildClientCapabilities();
+    // Resolve protocol version for capability negotiation (P0 Fix + T06)
+    let protocolVersion: string | undefined;
+    if (definition.protocolVersion === MODERN_PROTOCOL_VERSION) {
+      protocolVersion = MODERN_PROTOCOL_VERSION;
+    } else if (definition.protocolVersion === "legacy") {
+      protocolVersion = "legacy";
+    } else if (definition.protocolVersion === "auto") {
+      // Auto-negotiated; we don't know yet at client creation time
+      // Pass undefined — sampling will be included (legacy-safe)
+      protocolVersion = undefined;
+    }
+    const capabilities = this.buildClientCapabilities(protocolVersion);
     const versionNegotiation = resolveVersionNegotiation(definition);
     let client: Client;
     client = new Client(
       { name: `pi-mcp-${serverName}`, version: "1.0.0" },
       {
         jsonSchemaValidator: createJsonSchemaValidator(),
-        versionNegotiation,
+        ...(versionNegotiation ? { versionNegotiation } : {}),
         ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
         listChanged: {
           tools: {
@@ -1526,14 +1682,19 @@ export class McpServerManager {
     let implicitStoredAuth: ReturnType<typeof inspectAuthForUrl> | undefined;
     if (definition.auth === undefined && supportsOAuth(definition)) {
       try {
-        implicitStoredAuth = inspectAuthForUrl(serverName, serverUrl, this.authStorageOptions);
+        implicitStoredAuth = inspectAuthForUrl(
+          serverName,
+          serverUrl,
+          this.authStorageOptions,
+        );
       } catch {
         // Implicit preflight is opportunistic; malformed records must not block
         // an otherwise anonymous-capable server from connecting.
       }
     }
-    const hasImplicitStoredTokens = implicitStoredAuth?.status === "present"
-      && implicitStoredAuth.entry.tokens !== undefined;
+    const hasImplicitStoredTokens =
+      implicitStoredAuth?.status === "present" &&
+      implicitStoredAuth.entry.tokens !== undefined;
     if (hasImplicitStoredTokens) invalidateAuthEntryCache(serverName);
     let authState: HttpAuthProviderState = supportsOAuth(definition)
       ? definition.auth === undefined
@@ -1608,9 +1769,9 @@ export class McpServerManager {
     };
 
     // Connect the real client once. Retry Streamable HTTP only for an implicit
-    // OAuth challenge.
+    // OAuth challenge; use SSE only for definitive endpoint incompatibility.
     // Agent Plugins set httpTransport, and their declared transport is used without fallback.
-    const kind: "streamable-http" | "sse" =
+    let kind: "streamable-http" | "sse" =
       definition.httpTransport ?? "streamable-http";
     let invalidated = credentialsInvalidated;
     for (;;) {
@@ -1650,7 +1811,15 @@ export class McpServerManager {
         }
         throw result.error;
       }
-    
+
+      if (
+        definition.httpTransport === undefined &&
+        kind === "streamable-http" &&
+        shouldFallbackToSse(result.error, definition)
+      ) {
+        kind = "sse";
+        continue;
+      }
       throw result.error;
     }
   }
@@ -1691,8 +1860,8 @@ export class McpServerManager {
       if (firstPage) {
         if (ttlMs !== undefined || cacheScope !== undefined) {
           hints = {
-            ...(ttlMs !== undefined ? { ttlMs } : {}),
-            ...(cacheScope !== undefined ? { cacheScope } : {}),
+            ...(ttlMs === undefined ? {} : { ttlMs }),
+            ...(cacheScope === undefined ? {} : { cacheScope }),
           };
         }
         firstPage = false;
@@ -1709,7 +1878,7 @@ export class McpServerManager {
       cursor = result.nextCursor;
     } while (cursor);
 
-    return { tools: allTools, ...(hints !== undefined ? { hints } : {}) };
+    return { tools: allTools, ...(hints === undefined ? {} : { hints }) };
   }
 
   private async fetchAllPrompts(
@@ -1741,7 +1910,11 @@ export class McpServerManager {
     }
   }
 
-  private async fetchAllResources(client: Client, requestOptions?: RequestOptions, strict = false): Promise<McpResource[]> {
+  private async fetchAllResources(
+    client: Client,
+    requestOptions?: RequestOptions,
+    strict = false,
+  ): Promise<McpResource[]> {
     const capabilities = client.getServerCapabilities?.();
     if (!capabilities?.resources) return [];
 
@@ -1821,21 +1994,35 @@ export class McpServerManager {
     return allTemplates;
   }
 
-  private attachAdapterNotificationHandlers(serverName: string, client: Client): void {
-    client.setNotificationHandler("notifications/resources/updated", notification => {
-      const uri = notification.params.uri;
-      const connection = this.connections.get(serverName);
-      if (!connection || connection.client !== client || connection.status !== "connected") return;
-      for (const registration of this.resourceUpdatedListeners.values()) {
-        if (registration.serverName === serverName && registration.uri === uri) {
-          try {
-            registration.listener(serverName, uri);
-          } catch {
-            // One UI listener must not block resource invalidation for others.
+  private attachAdapterNotificationHandlers(
+    serverName: string,
+    client: Client,
+  ): void {
+    client.setNotificationHandler(
+      "notifications/resources/updated",
+      (notification) => {
+        const uri = notification.params.uri;
+        const connection = this.connections.get(serverName);
+        if (
+          !connection ||
+          connection.client !== client ||
+          connection.status !== "connected"
+        )
+          return;
+        for (const registration of this.resourceUpdatedListeners.values()) {
+          if (
+            registration.serverName === serverName &&
+            registration.uri === uri
+          ) {
+            try {
+              registration.listener(serverName, uri);
+            } catch {
+              // One UI listener must not block resource invalidation for others.
+            }
           }
         }
-      }
-    });
+      },
+    );
     client.setNotificationHandler(
       SERVER_STREAM_RESULT_PATCH_METHOD,
       { params: serverStreamResultPatchNotificationSchema.shape.params },
@@ -1902,7 +2089,9 @@ export class McpServerManager {
       const requestOptions = this.getRequestOptions(name, signal);
       return await connection.client.readResource(
         { uri },
-        refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions,
+        refreshRead
+          ? { ...requestOptions, cacheMode: "refresh" }
+          : requestOptions,
       );
     } finally {
       this.decrementInFlight(name);

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -40,15 +47,145 @@ describe("npx-resolver", () => {
     writeCachedPackage(npmCache, "demo-pkg");
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
-    const result = await resolveNpxBinary("npx", ["-y", "demo-pkg", "--token=secret-value"]);
+    const result = await resolveNpxBinary("npx", [
+      "-y",
+      "demo-pkg",
+      "--token=secret-value",
+    ]);
     const cache = readFileSync(join(agentDir, "mcp-npx-cache.json"), "utf-8");
 
     expect(result?.extraArgs).toEqual(["--token=secret-value"]);
     expect(cache).not.toContain("secret-value");
     expect(existsSync(join(agentDir, "mcp-npx-cache.json"))).toBe(true);
-    expect(existsSync(join(home, ".pi", "agent", "mcp-npx-cache.json"))).toBe(false);
+    expect(existsSync(join(home, ".pi", "agent", "mcp-npx-cache.json"))).toBe(
+      false,
+    );
   });
-    
+
+  it("removes stale version-1 cache files on module import", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+    const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.NPM_CONFIG_CACHE = npmCache;
+
+    writeFileSync(
+      join(agentDir, "mcp-npx-cache.json"),
+      JSON.stringify({
+        version: 1,
+        entries: {
+          [JSON.stringify([
+            "npx",
+            "-y",
+            "demo-pkg",
+            "--token=secret-value",
+          ] as const)]: {},
+        },
+      }),
+      "utf-8",
+    );
+    await import("../npx-resolver.ts");
+
+    expect(existsSync(join(agentDir, "mcp-npx-cache.json"))).toBe(false);
+  });
+
+  it("continues resolution when version-1 cache deletion fails", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+    const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.NPM_CONFIG_CACHE = npmCache;
+
+    const cachePath = join(agentDir, "mcp-npx-cache.json");
+    writeFileSync(
+      cachePath,
+      JSON.stringify({ version: 1, entries: {} }),
+      "utf-8",
+    );
+    vi.doMock("node:fs", async (importOriginal) => {
+      const fs = await importOriginal<typeof import("node:fs")>();
+      return {
+        ...fs,
+        unlinkSync: vi.fn(() => {
+          throw new Error("permission denied");
+        }),
+        writeFileSync: vi.fn(() => {
+          throw new Error("permission denied");
+        }),
+      };
+    });
+    vi.doMock("cross-spawn", () => ({
+      default: vi.fn(() => {
+        throw new Error("npm unavailable");
+      }),
+    }));
+
+    const { resolveNpxBinary } = await import("../npx-resolver.ts");
+    await expect(
+      resolveNpxBinary("npx", ["-y", "missing-pkg"]),
+    ).resolves.toBeNull();
+
+    expect(existsSync(cachePath)).toBe(true);
+  });
+
+  it("clears version-1 secrets and returns a cached package when cache save fails", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+    const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.NPM_CONFIG_CACHE = npmCache;
+
+    const cachePath = join(agentDir, "mcp-npx-cache.json");
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        version: 1,
+        entries: {
+          [JSON.stringify(["npx", "demo-pkg", "--token=secret-value"])]: {},
+        },
+      }),
+      "utf-8",
+    );
+    const binPath = writeCachedPackage(npmCache, "demo-pkg");
+    vi.doMock("node:fs", async (importOriginal) => {
+      const fs = await importOriginal<typeof import("node:fs")>();
+      return {
+        ...fs,
+        unlinkSync: vi.fn(() => {
+          throw new Error("permission denied");
+        }),
+        writeFileSync: vi.fn(
+          (
+            path: string,
+            data: string,
+            options?: Parameters<typeof fs.writeFileSync>[2],
+          ) => {
+            if (path === cachePath && data === "")
+              return fs.writeFileSync(path, data, options);
+            throw new Error("permission denied");
+          },
+        ),
+      };
+    });
+
+    const { resolveNpxBinary } = await import("../npx-resolver.ts");
+    expect(readFileSync(cachePath, "utf-8")).not.toContain("secret-value");
+
+    await expect(
+      resolveNpxBinary("npx", ["-y", "demo-pkg", "--runtime=value"]),
+    ).resolves.toEqual({
+      binPath,
+      extraArgs: ["--runtime=value"],
+      isJs: true,
+    });
+  });
+
   it("ignores malformed version-2 cache entries", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
@@ -59,23 +196,29 @@ describe("npx-resolver", () => {
     process.env.NPM_CONFIG_CACHE = npmCache;
 
     const cachePath = join(agentDir, "mcp-npx-cache.json");
-    writeFileSync(cachePath, JSON.stringify({
-      version: 2,
-      entries: {
-        [JSON.stringify(["npx", "demo-pkg", ""])]: {
-          resolvedBin: 123,
-          resolvedAt: "recent",
-          isJs: "yes",
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        version: 2,
+        entries: {
+          [JSON.stringify(["npx", "demo-pkg", ""])]: {
+            resolvedBin: 123,
+            resolvedAt: "recent",
+            isJs: "yes",
+          },
         },
-      },
-    }), "utf-8");
+      }),
+      "utf-8",
+    );
     const binPath = writeCachedPackage(npmCache, "demo-pkg");
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "demo-pkg"]);
 
     expect(result?.binPath).toBe(binPath);
-    expect(readFileSync(cachePath, "utf-8")).not.toContain("\"resolvedBin\": 123");
+    expect(readFileSync(cachePath, "utf-8")).not.toContain(
+      '"resolvedBin": 123',
+    );
   });
 
   it("ignores persisted prototype keys during cache lookup", async () => {
@@ -89,7 +232,9 @@ describe("npx-resolver", () => {
 
     const poisonedBin = writeCachedPackage(npmCache, "poison-pkg");
     const demoBin = writeCachedPackage(npmCache, "demo-pkg");
-    writeFileSync(join(agentDir, "mcp-npx-cache.json"), `{
+    writeFileSync(
+      join(agentDir, "mcp-npx-cache.json"),
+      `{
       "version": 2,
       "entries": {
         "__proto__": {
@@ -98,7 +243,9 @@ describe("npx-resolver", () => {
           "isJs": true
         }
       }
-    }`, "utf-8");
+    }`,
+      "utf-8",
+    );
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "demo-pkg"]);
@@ -124,7 +271,9 @@ describe("npx-resolver", () => {
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "demo-pkg"]);
 
-    expect(sync).toHaveBeenCalledWith("npm", ["config", "get", "cache"], { encoding: "utf-8" });
+    expect(sync).toHaveBeenCalledWith("npm", ["config", "get", "cache"], {
+      encoding: "utf-8",
+    });
     expect(crossSpawn).not.toHaveBeenCalled();
     expect(result?.binPath).toBe(binPath);
   });
@@ -185,7 +334,12 @@ describe("npx-resolver", () => {
       "@upstash/context7-mcp",
     ]);
 
-    expect(result?.extraArgs).toEqual(["--", "npx", "--yes", "@upstash/context7-mcp"]);
+    expect(result?.extraArgs).toEqual([
+      "--",
+      "npx",
+      "--yes",
+      "@upstash/context7-mcp",
+    ]);
   });
 
   it("does not add separators to npx invocations that did not include one", async () => {
@@ -219,7 +373,12 @@ describe("npx-resolver", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.NPM_CONFIG_CACHE = npmCache;
 
-    const correctBin = writeCachedPackage(npmCache, "@scope/pkg", "2.0.0", "correct");
+    const correctBin = writeCachedPackage(
+      npmCache,
+      "@scope/pkg",
+      "2.0.0",
+      "correct",
+    );
     writeCachedPackage(npmCache, "@scope/pkg", "1.0.0", "old");
     const newer = new Date(Date.now() + 10_000);
     utimesSync(join(npmCache, "_npx", "old"), newer, newer);
@@ -239,7 +398,12 @@ describe("npx-resolver", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.NPM_CONFIG_CACHE = npmCache;
 
-    const correctBin = writeCachedPackage(npmCache, "plainpkg", "2.0.0", "correct");
+    const correctBin = writeCachedPackage(
+      npmCache,
+      "plainpkg",
+      "2.0.0",
+      "correct",
+    );
     writeCachedPackage(npmCache, "plainpkg", "1.0.0", "old");
     const newer = new Date(Date.now() + 10_000);
     utimesSync(join(npmCache, "_npx", "old"), newer, newer);
@@ -261,7 +425,12 @@ describe("npx-resolver", () => {
       process.env.PI_CODING_AGENT_DIR = agentDir;
       process.env.NPM_CONFIG_CACHE = npmCache;
 
-      const correctBin = writeCachedPackage(npmCache, "plainpkg", "2.0.0", "correct");
+      const correctBin = writeCachedPackage(
+        npmCache,
+        "plainpkg",
+        "2.0.0",
+        "correct",
+      );
       writeCachedPackage(npmCache, "plainpkg", "1.0.0", "old");
       const newer = new Date(Date.now() + 10_000);
       utimesSync(join(npmCache, "_npx", "old"), newer, newer);
@@ -282,7 +451,12 @@ describe("npx-resolver", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.NPM_CONFIG_CACHE = npmCache;
 
-    const correctBin = writeCachedPackage(npmCache, "plainpkg", "2.0.0", "correct");
+    const correctBin = writeCachedPackage(
+      npmCache,
+      "plainpkg",
+      "2.0.0",
+      "correct",
+    );
     const wrongBin = writeCachedPackage(npmCache, "plainpkg", "1.0.0", "old");
     writeFileSync(
       join(agentDir, "mcp-npx-cache.json"),
@@ -302,10 +476,15 @@ describe("npx-resolver", () => {
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "plainpkg@2.0.0"]);
-    const cache = JSON.parse(readFileSync(join(agentDir, "mcp-npx-cache.json"), "utf-8"));
+    const cache = JSON.parse(
+      readFileSync(join(agentDir, "mcp-npx-cache.json"), "utf-8"),
+    );
 
     expect(result?.binPath).toBe(correctBin);
-    expect(cache.entries[JSON.stringify(["npx", "plainpkg@2.0.0", ""])]?.packageVersion).toBe("2.0.0");
+    expect(
+      cache.entries[JSON.stringify(["npx", "plainpkg@2.0.0", ""])]
+        ?.packageVersion,
+    ).toBe("2.0.0");
   });
 });
 
@@ -315,7 +494,13 @@ function writeCachedPackage(
   version = "1.0.0",
   cacheId = "fixture",
 ): string {
-  const packageDir = join(npmCache, "_npx", cacheId, "node_modules", packageName);
+  const packageDir = join(
+    npmCache,
+    "_npx",
+    cacheId,
+    "node_modules",
+    packageName,
+  );
   mkdirSync(join(packageDir, "bin"), { recursive: true });
   writeFileSync(
     join(packageDir, "package.json"),

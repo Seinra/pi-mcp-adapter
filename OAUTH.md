@@ -39,6 +39,7 @@ For most MCP servers, you only need the URL:
 ```
 
 OAuth is automatically enabled for HTTP servers. The SDK will:
+
 - Auto-detect if the server requires OAuth
 - Discover OAuth endpoints from the server
 - Use Dynamic Client Registration fallback when no pre-registered client is configured and the server supports it
@@ -65,8 +66,6 @@ You can optionally provide a pre-registered client:
   }
 }
 ```
-
-
 
 ### Configuration Options
 
@@ -121,6 +120,7 @@ Run the `/mcp-auth` command with the server name:
 Manual `/mcp-auth` is the default flow. If you set `settings.autoAuth: true`, proxy/direct tool execution will trigger OAuth automatically when a server returns `needs-auth`, then retry the original operation once.
 
 This will:
+
 1. Start the callback server lazily on an OS-assigned local port, or on the exact `oauth.redirectUri` port for pre-registered callbacks
 2. Discover OAuth endpoints automatically
 3. Use Dynamic Client Registration fallback when no `clientId` is configured and the server supports registration
@@ -159,6 +159,7 @@ mcp({ tool: "my-tool", args: { key: "value" } })
 ```
 
 The SDK automatically:
+
 - Adds the access token to requests
 - Refreshes expired tokens automatically
 - Re-authenticates if tokens are invalid
@@ -238,7 +239,7 @@ Complete credential entries are held in memory for the lifetime of the Pi proces
 
 A credential changed or deleted by another process while Pi is running is not observed immediately. The affected server picks it up after the first credential-backed authentication failure in that `needs-auth` episode: Pi discards the cached entry, and the following read reloads from the credential store. Restarting Pi also clears the cache. Set `PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1` to turn the cache off entirely and restore a credential-store read per request.
 
-Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. The one-time import of those plaintext files has been removed: existing credentials stay in the OS credential store, and a leftover plaintext `tokens.json` is ignored — re-authenticate once if such an entry was never migrated. These directories are no longer used for credential storage.
+Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. On first read after upgrade, a valid legacy entry is imported into the OS credential store and the plaintext `tokens.json` file is removed. These directories are now legacy import locations, not persistent credential stores or isolation namespaces.
 
 The stored `serverUrl` field ensures credentials are invalidated if the server URL changes.
 
@@ -262,7 +263,7 @@ When an MCP server does not publish usable protected-resource metadata, configur
 
 ### OS Credential Store
 
-Persistent OAuth credentials are written to the OS credential store. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
+Persistent OAuth credentials are written to the OS credential store. Legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
 
 Credential entries reside in process memory for the lifetime of the Pi process on every supported credential-store platform rather than being re-read per request. They are never written anywhere but the OS credential store, and the process-memory copy is discarded on exit.
 
@@ -313,7 +314,7 @@ If the browser fails to open (e.g., in SSH sessions), the authorization URL will
 
 The OAuth implementation uses the following modules:
 
-- `mcp-auth.ts` - Auth storage and retrieval through the OS credential store
+- `mcp-auth.ts` - Auth storage and retrieval through the OS credential store, with one-way legacy `tokens.json` import
 - `mcp-oauth-provider.ts` - SDK OAuthClientProvider implementation
 - `mcp-callback-server.ts` - Node.js HTTP callback server
 - `mcp-auth-flow.ts` - High-level auth flow using SDK transport

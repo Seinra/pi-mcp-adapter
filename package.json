@@ -109,6 +109,7 @@
     "package-mcp-loader.ts",
     "server-manager.ts",
     "bearer-command-resolver.ts",
+    "envelope-reshape.ts",
     "http-ca.ts",
     "request-headers-command.ts",
     "unix-socket-transport.ts",

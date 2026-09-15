@@ -18,7 +18,10 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${PI_MCP_ADAPTER_DEST:-C:/Users/Seinra/.pi/agent/npm/node_modules/pi-mcp-adapter}"
 FILES=(envelope-reshape.ts server-manager.ts package.json)
 
-fail() { echo "ERROR: $*" >&2; exit 1; }
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
 info() { echo "-- $*"; }
 
 [[ -d "$DEST" ]] || fail "installed adapter not found at $DEST (set PI_MCP_ADAPTER_DEST?)"
@@ -37,11 +40,11 @@ fi
 
 info "verifying installed build"
 [[ -f "$DEST/envelope-reshape.ts" ]] || fail "envelope-reshape.ts missing in $DEST"
-grep -q "installEnvelopeReshaping" "$DEST/server-manager.ts" \
-  || fail "server-manager.ts in $DEST has no reshape hooks (official build?)"
-grep -q "envelope-reshape" "$DEST/package.json" \
-  || fail "package.json in $DEST lacks the envelope-reshape files entry"
-grep -q '"version": "2.34.0"' "$DEST/package.json" \
-  || fail "unexpected version in $DEST/package.json"
+grep -q "installEnvelopeReshaping" "$DEST/server-manager.ts" ||
+  fail "server-manager.ts in $DEST has no reshape hooks (official build?)"
+grep -q "envelope-reshape" "$DEST/package.json" ||
+  fail "package.json in $DEST lacks the envelope-reshape files entry"
+grep -q '"version": "2.34.0"' "$DEST/package.json" ||
+  fail "unexpected version in $DEST/package.json"
 
 info "OK: fork build installed (reshape hooks + files entry present)"

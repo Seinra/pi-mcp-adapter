@@ -76,6 +76,10 @@ import {
   traceTransportKind,
   wrapTransportWithMcpTrace,
 } from "./mcp-trace.ts";
+import {
+  enableReshapingProbeSiblings,
+  installEnvelopeReshaping,
+} from "./envelope-reshape.ts";
 import { createOAuthFetch, resolveOAuthHeaders } from "./mcp-auth-fetch.ts";
 import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
 import { createCaFetch, validateCaFile } from "./http-ca.ts";
@@ -915,6 +919,9 @@ export class McpServerManager {
         ...(cwd !== undefined ? { cwd } : {}),
         stderr: definition.debug ? "inherit" : "pipe",
       });
+      // Reshape spec-literal 2026-07-28 envelopes before the SDK's strict parse.
+      installEnvelopeReshaping(stdioTransport);
+      enableReshapingProbeSiblings(stdioTransport);
       // Keep non-debug child diagnostics available for connection failures without
       // retaining an unbounded stream or changing the existing debug behavior.
       if (stdioTransport.stderr) {
@@ -957,6 +964,9 @@ export class McpServerManager {
     } else {
       client = this.createClient(name, definition);
       transport = new UnixSocketClientTransport(resolveConfigPath(definition.socket!)!);
+      // Reshape spec-literal 2026-07-28 envelopes before the SDK's strict parse.
+      installEnvelopeReshaping(transport);
+      enableReshapingProbeSiblings(transport);
     }
 
     if (traceObserver && !transportAlreadyTraced) {
@@ -1429,6 +1439,8 @@ export class McpServerManager {
       const baseTransport: Transport = kind === "streamable-http"
         ? new StreamableHTTPClientTransport(url, transportOptions)
         : new SSEClientTransport(url, transportOptions);
+      // Reshape spec-literal 2026-07-28 envelopes before the SDK's strict parse.
+      installEnvelopeReshaping(baseTransport);
       const transport = traceObserver
         ? wrapTransportWithMcpTrace(baseTransport, serverName, kind, traceObserver)
         : baseTransport;

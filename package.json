@@ -108,6 +108,7 @@
     "claude-plugin-loader.ts",
     "package-mcp-loader.ts",
     "server-manager.ts",
+    "envelope-reshape.ts",
     "http-ca.ts",
     "request-headers-command.ts",
     "unix-socket-transport.ts",

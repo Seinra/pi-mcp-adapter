@@ -247,6 +247,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return commandCtx;
   }
 
+  function createLiveCommandContext(ctx: ExtensionContext): ExtensionContext {
+    // Failure-reporting paths must never notify through a fenced (stopped-owner)
+    // proxy: createOwnedUi returns undefined for every member once the owner is
+    // inactive, which turns the report itself into
+    // "commandCtx.ui?.notify is not a function" and hides the real failure.
+    // Fall back to the raw Pi UI when no owner is live: it only displays.
+    return createCommandContext(ctx, currentOwner?.isActive() ? currentOwner : null);
+  }
+
   function startGatewayRetryInitialization(ctx: ExtensionContext): void {
     const generation = ++lifecycleGeneration;
     const owner = createMcpRuntimeOwner();
@@ -1283,11 +1292,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           commandOwner?.throwIfInactive();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          commandCtx = createLiveCommandContext(ctx as unknown as ExtensionContext);
           if (commandCtx.hasUI) commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
           return;
         }
       }
       if (!state) {
+        commandCtx = createLiveCommandContext(ctx as unknown as ExtensionContext);
         if (commandCtx.hasUI) commandCtx.ui?.notify("MCP not initialized", "error");
         return;
       }
@@ -1299,6 +1310,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       } catch (error) {
         if (commandGuard.owner && isOwnerAbortError(error, commandGuard.owner)) return;
         const message = error instanceof Error ? error.message : String(error);
+        commandCtx = createLiveCommandContext(ctx as unknown as ExtensionContext);
         if (commandCtx.hasUI) commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
         return;
       }
@@ -1463,11 +1475,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           commandOwner?.throwIfInactive();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          commandCtx = createLiveCommandContext(ctx as unknown as ExtensionContext);
           if (commandCtx.hasUI) commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
           return;
         }
       }
       if (!state) {
+        commandCtx = createLiveCommandContext(ctx as unknown as ExtensionContext);
         if (commandCtx.hasUI) commandCtx.ui?.notify("MCP not initialized", "error");
         return;
       }
@@ -1479,6 +1493,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       } catch (error) {
         if (commandGuard.owner && isOwnerAbortError(error, commandGuard.owner)) return;
         const message = error instanceof Error ? error.message : String(error);
+        commandCtx = createLiveCommandContext(ctx as unknown as ExtensionContext);
         if (commandCtx.hasUI) commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
         return;
       }

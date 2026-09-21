@@ -2274,6 +2274,22 @@ describe("mcpAdapter session lifecycle", () => {
     expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("in-memory"), "info");
   });
 
+  it("reports init failure through live UI when the entry owner is stale", async () => {
+    const { createMcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    createMcpAdapter({ config: { mcpServers: { memory: { url: "https://memory.example.com/mcp" } } } })(api);
+    const ui = { notify: vi.fn() };
+    mocks.initializeMcp.mockRejectedValue(new Error("boom-init"));
+    await handlers.get("session_start")?.({}, { hasUI: true, ui });
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    await commandDef.handler("status", { hasUI: true, ui });
+    expect(ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("MCP initialization failed"),
+      "error",
+    );
+  });
+
   it("starts a replacement init immediately and shuts down stale init results", async () => {
     const first = createDeferred<any>();
     const second = createDeferred<any>();

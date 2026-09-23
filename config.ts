@@ -380,15 +380,10 @@ function mergeClaudePluginMcpDefaults(
 }
 
 function applySettingDefaults(config: McpConfig): McpConfig {
-  if (config.settings?.exposeResources === undefined) return config;
-  const globalExposeResources = config.settings.exposeResources;
-  const mcpServers: Record<string, ServerEntry> = {};
-  for (const [name, entry] of Object.entries(config.mcpServers)) {
-    mcpServers[name] = {
-      ...entry,
-      ...(entry.exposeResources === undefined ? { exposeResources: globalExposeResources } : {}),
-    };
-  }
+  const exposeResources = config.settings?.exposeResources;
+  if (exposeResources === undefined) return config;
+  const mcpServers = Object.fromEntries(Object.entries(config.mcpServers)
+    .map(([name, entry]) => [name, entry.exposeResources === undefined ? { ...entry, exposeResources } : entry]));
   return { ...config, mcpServers };
 }
 
@@ -811,7 +806,27 @@ function loadImportedConfig(
       try {
         const value = readImportedConfig(path);
         if (value && typeof value === "object" && !Array.isArray(value)) {
-          merged = mergeOpenCodeConfigs(merged, value as Record<string, unknown>);
+          const imported = value as Record<string, unknown>;
+          const mcp = isRecord(imported.mcp) ? imported.mcp : {};
+          // OpenCode v2 nests definitions under mcp.servers; normalize before
+          // merging so project overrides retain the existing merge semantics.
+          const entries = isRecord(mcp.servers)
+            ? { ...Object.fromEntries(Object.entries(mcp).filter(([name]) => name !== "servers" && name !== "timeout")), ...mcp.servers }
+            : mcp;
+          const normalized = Object.fromEntries(Object.entries(entries).map(([name, entry]) => {
+            if (!isRecord(entry) || !isRecord(entry.oauth)) return [name, entry];
+            const { client_id, client_secret, auth_server_metadata_url, ...oauth } = entry.oauth;
+            return [name, {
+              ...entry,
+              oauth: {
+                ...oauth,
+                ...(client_id !== undefined ? { clientId: client_id } : {}),
+                ...(client_secret !== undefined ? { clientSecret: client_secret } : {}),
+                ...(auth_server_metadata_url !== undefined ? { authServerMetadataUrl: auth_server_metadata_url } : {}),
+              },
+            }];
+          }));
+          merged = mergeOpenCodeConfigs(merged, { ...imported, mcp: normalized });
           highestPrecedencePath = path;
         }
       } catch (error) {
@@ -1011,7 +1026,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     if (kind === "opencode") {
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
       const raw = entry as Record<string, unknown>;
-      if (raw.enabled === false) continue;
+      if (raw.enabled === false || raw.disabled === true) continue;
 
       if (raw.type === "local" && Array.isArray(raw.command) && raw.command.length > 0 && raw.command.every((value): value is string => typeof value === "string")) {
         const env = toStringRecord(raw.environment);
@@ -1038,12 +1053,15 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
         } else if (raw.oauth && typeof raw.oauth === "object" && !Array.isArray(raw.oauth)) {
           const oauth = raw.oauth as Record<string, unknown>;
           mapped.auth = "oauth";
+          const clientId = oauth.clientId;
+          const clientSecret = oauth.clientSecret;
+          const authServerMetadataUrl = oauth.authServerMetadataUrl;
           mapped.oauth = {
-            ...(typeof oauth.clientId === "string" ? { clientId: oauth.clientId } : {}),
-            ...(typeof oauth.clientSecret === "string" ? { clientSecret: oauth.clientSecret } : {}),
+            ...(typeof clientId === "string" ? { clientId } : {}),
+            ...(typeof clientSecret === "string" ? { clientSecret } : {}),
             ...(typeof oauth.clientMetadataUrl === "string" ? { clientMetadataUrl: oauth.clientMetadataUrl } : {}),
             ...(typeof oauth.scope === "string" ? { scope: oauth.scope } : {}),
-            ...(typeof oauth.authServerMetadataUrl === "string" ? { authServerMetadataUrl: oauth.authServerMetadataUrl } : {}),
+            ...(typeof authServerMetadataUrl === "string" ? { authServerMetadataUrl } : {}),
             ...(typeof oauth.skipIssuerMetadataValidation === "boolean"
               ? { skipIssuerMetadataValidation: oauth.skipIssuerMetadataValidation }
               : {}),

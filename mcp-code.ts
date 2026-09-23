@@ -213,7 +213,7 @@ export async function runMcpScript(
   let evaluationAttempts = 0;
   let evaluationBytes = 0;
   let evaluationTokensRemaining = jevSettings.maxEvaluationTokensPerScript;
-  const tokenBudgetExhausted = (): JevEvaluationEnvelope => ({ ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation token budget exhausted." } });
+  const tokenBudgetExhausted = (): JevEvaluationEnvelope => ({ ok: false, error: { code: "budget_exhausted", message: "Jev evaluation token budget exhausted." } });
   const chargeEvaluationTokens = (envelope: JevEvaluationEnvelope): JevEvaluationEnvelope => {
     if (!envelope.ok) return envelope;
     const used = envelope.data.usage.inputTokens + envelope.data.usage.outputTokens;
@@ -226,16 +226,16 @@ export async function runMcpScript(
   };
   const admitEvaluation = (input: unknown): JevEvaluationEnvelope | undefined => {
     if (++evaluationAttempts > jevSettings.maxEvaluationsPerScript) {
-      return { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation count budget exhausted." } };
+      return { ok: false, error: { code: "budget_exhausted", message: "Jev evaluation count budget exhausted." } };
     }
     if (evaluationTokensRemaining === 0) return tokenBudgetExhausted();
     let serialized: string | undefined;
     try { serialized = JSON.stringify(input); }
-    catch { return { ok: false, error: { code: "invalid_request", message: "Invalid TypeSafe evaluation request." } }; }
-    if (serialized === undefined) return { ok: false, error: { code: "invalid_request", message: "Invalid TypeSafe evaluation request." } };
+    catch { return { ok: false, error: { code: "invalid_request", message: "Invalid Jev evaluation request." } }; }
+    if (serialized === undefined) return { ok: false, error: { code: "invalid_request", message: "Invalid Jev evaluation request." } };
     const bytes = Buffer.byteLength(serialized, "utf8");
     if (bytes > jevSettings.maxEvaluationBytesPerScript - evaluationBytes) {
-      return { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation byte budget exhausted." } };
+      return { ok: false, error: { code: "budget_exhausted", message: "Jev evaluation byte budget exhausted." } };
     }
     evaluationBytes += bytes;
     return undefined;
@@ -257,7 +257,7 @@ export async function runMcpScript(
     envelope = chargeEvaluationTokens(envelope);
     throwIfAborted(callSignal);
     if (!reserveIntermediateBytes(JSON.stringify(envelope))) {
-      envelope = { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation exceeds the remaining mcpScript intermediate transfer budget (16 MiB per script)." } };
+      envelope = { ok: false, error: { code: "budget_exhausted", message: "Jev evaluation exceeds the remaining mcpScript intermediate transfer budget (16 MiB per script)." } };
     }
     calls[index] = envelope.ok
       ? {

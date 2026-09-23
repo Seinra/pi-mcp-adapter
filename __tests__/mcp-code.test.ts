@@ -143,9 +143,9 @@ describe("runMcpScript", () => {
   });
 
   it("taints later direct and semantic evaluations with every server-attributed call", async () => {
-    const originalKey = process.env.TYPESAFE_API_KEY;
+    const originalKey = process.env.SYSTEMONE_API_KEY;
     const originalStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
-    delete process.env.TYPESAFE_API_KEY;
+    delete process.env.SYSTEMONE_API_KEY;
     process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
     resetTestSecureKeyring();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -178,8 +178,8 @@ describe("runMcpScript", () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
-      if (originalKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = originalKey;
+      if (originalKey === undefined) delete process.env.SYSTEMONE_API_KEY;
+      else process.env.SYSTEMONE_API_KEY = originalKey;
       if (originalStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
       else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalStore;
       resetTestSecureKeyring();

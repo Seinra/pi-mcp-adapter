@@ -14,11 +14,27 @@ const input = {
   sources: ["allowed"],
 };
 
+function recordDecisionRequests(): string[] {
+  const seen: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (request) => {
+    seen.push(new URL(String(request)).href);
+    return new Response(JSON.stringify({
+      model: "jev-1.13.0",
+      answers: { route: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0 } } },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  return seen;
+}
+
 describe("Jev host client", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
     process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
-    process.env.TYPESAFE_API_KEY = "fixture-key";
+    process.env.SYSTEMONE_API_KEY = "fixture-key";
+    delete process.env.TYPESAFE_API_KEY;
+    delete process.env.SYSTEMONE_ENDPOINT;
+    // The SDK itself reads these to relocate or re-log; the adapter must pin the endpoint regardless.
     delete process.env.TYPESAFE_BASE_URL;
     delete process.env.TYPESAFE_DEFAULT_MODEL;
     delete process.env.TYPESAFE_LOG_LEVEL;
@@ -55,13 +71,13 @@ describe("Jev host client", () => {
       allowedServers: ["allowed"],
     });
 
-    delete process.env.TYPESAFE_API_KEY;
+    delete process.env.SYSTEMONE_API_KEY;
     saveJevApiKey("stored-key");
     expect(resolveSemanticJevSettings(runtime).semanticSearch).toBe(true);
   });
 
   it("reuses a keyring credential throughout semantic evaluation", async () => {
-    delete process.env.TYPESAFE_API_KEY;
+    delete process.env.SYSTEMONE_API_KEY;
     saveJevApiKey("stored-key");
     const runtime = state({});
     expect(resolveSemanticJevSettings(runtime).semanticSearch).toBe(true);
@@ -75,7 +91,7 @@ describe("Jev host client", () => {
     expect(getTestSecureKeyringReadCount()).toBe(1);
   });
 
-  it("uses the fixed HTTPS origin, rejects redirects, and validates a response", async () => {
+  it("pins the configured endpoint, rejects redirects, and validates a response", async () => {
     process.env.TYPESAFE_BASE_URL = "https://evil.test";
     process.env.TYPESAFE_DEFAULT_MODEL = "jev-latest";
     process.env.TYPESAFE_LOG_LEVEL = "debug";
@@ -93,10 +109,32 @@ describe("Jev host client", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
+  it("re-resolves SYSTEMONE_ENDPOINT for every evaluation and fails closed when it becomes invalid", async () => {
+    const runtime = state({ scriptEvaluation: true, allowedServers: ["allowed"] });
+    const seen = recordDecisionRequests();
+    expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: true });
+    process.env.SYSTEMONE_ENDPOINT = "https://opencode.ai/zen/v1/systemone";
+    expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: true });
+    expect(seen).toEqual(["https://api.typesafe.ai/v1/systemone", "https://opencode.ai/zen/v1/systemone"]);
+    process.env.SYSTEMONE_ENDPOINT = "http://evil.test/v1/systemone";
+    expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: false, error: { code: "endpoint_unavailable" } });
+    expect(seen).toHaveLength(2);
+  });
+
+  it("keeps replacement-pattern characters in the configured path literal", async () => {
+    const paths = ["/api/$&/decisions", "/api/$$/decisions", "/api/$'/decisions", "/api/$`/decisions", "/api/$<name>/decisions", "/v1/systemone"];
+    const seen = recordDecisionRequests();
+    for (const path of paths) {
+      process.env.SYSTEMONE_ENDPOINT = `https://provider.test${path}`;
+      expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toMatchObject({ ok: true });
+    }
+    expect(seen).toEqual(paths.map(path => new URL(`https://provider.test${path}`).href));
+  });
+
   it("rejects malformed responses without leaking their body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ model: "x", answers: {}, usage: { input_tokens: 1, output_tokens: 1 }, secret: "provider body" }), { status: 200, headers: { "content-type": "application/json" } }));
     const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
-    expect(result).toEqual({ ok: false, error: { code: "invalid_response", message: "TypeSafe returned an invalid response." } });
+    expect(result).toEqual({ ok: false, error: { code: "invalid_response", message: "Jev returned an invalid response." } });
     expect(JSON.stringify(result)).not.toContain("provider body");
   });
 
@@ -134,7 +172,18 @@ describe("Jev host client", () => {
   it("classifies HTTP request timeouts as retryable timeouts", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("timed out", { status: 408 }));
     const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
-    expect(result).toEqual({ ok: false, error: { code: "timeout", message: "TypeSafe evaluation timed out.", retryable: true } });
+    expect(result).toEqual({ ok: false, error: { code: "timeout", message: "Jev evaluation timed out.", retryable: true } });
+  });
+
+  it("reports provider HTTP failures instead of calling them invalid responses", async () => {
+    const cases = [[402, "payment_required"], [404, "endpoint_unavailable"], [418, "invalid_request"]] as const;
+    for (const [status, code] of cases) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("provider body mentioning a fund shortfall", { status }));
+      const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
+      expect(result).toMatchObject({ ok: false, error: { code } });
+      expect(JSON.stringify(result)).not.toContain("fund shortfall");
+      vi.restoreAllMocks();
+    }
   });
 
   it("honors abort and a total deadline", async () => {

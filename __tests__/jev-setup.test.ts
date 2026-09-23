@@ -60,7 +60,7 @@ describe("Jev setup", () => {
 
     expect(await setupJevSemanticSearch(state(), { hasUI: true, ui } as any)).toBe(false);
     expect(ui.select).not.toHaveBeenCalled();
-    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("pi-mcp-adapter key set typesafe"), "error");
+    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("pi-mcp-adapter key set systemone"), "error");
   });
 
   it("does not overwrite malformed configuration", () => {

@@ -589,6 +589,8 @@ export type { JevAnswer, JevErrorCode, JevEvaluateInput, JevEvaluationData, JevE
 
 export interface McpSettings {
   toolPrefix?: ToolPrefix;
+  /** Allow agents to persist remote MCP endpoints with the install action. Defaults to true. */
+  allowInstall?: boolean;
   /** Show the plug prefix in MCP status and connection text (default: true). Set to false to disable it. */
   showStatusIcon?: boolean;
   /** Footer status verbosity: full details, compact connected/enabled count, or no footer status. Defaults to full. */
@@ -603,6 +605,8 @@ export interface McpSettings {
   agentPluginPaths?: string[];
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
+  /** Defer lazy runtime startup even when persisted metadata is missing or invalid. Defaults to false. */
+  deferWithMissingMetadata?: boolean;
   directTools?: boolean | "search";
   /** Register per-server mcp__<server> namespace proxies. Defaults to true. */
   namespaceProxyTools?: boolean;
@@ -622,7 +626,7 @@ export interface McpSettings {
   scriptMode?: boolean;
   /** Expose MCP resources as tools (default: true). Set to false to disable globally across all servers. */
   exposeResources?: boolean;
-  /** Optional TypeSafe Jev integrations. A valid key enables semantic search; script evaluation remains disabled by default. */
+  /** Optional Jev (System One) integrations. A valid key enables semantic search; script evaluation remains disabled by default. */
   jev?: false | {
     semanticSearch?: boolean;
     scriptEvaluation?: boolean;

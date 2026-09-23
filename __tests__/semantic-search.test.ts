@@ -91,7 +91,7 @@ describe("semantic search", () => {
     const state = stateWithTools();
     state.config.settings!.jev = { semanticSearch: false, allowedServers: ["demo"] };
     const evaluator = choiceEvaluator("none");
-    vi.stubEnv("TYPESAFE_API_KEY", "configured-key");
+    vi.stubEnv("SYSTEMONE_API_KEY", "configured-key");
     const result = await gatewaySemantic(state, "anything", evaluator);
     expect(result.details).toMatchObject({ error: "disabled" });
     expect(evaluator).not.toHaveBeenCalled();
@@ -101,7 +101,7 @@ describe("semantic search", () => {
     const state = stateWithTools();
     delete state.config.settings;
     state.config.mcpServers.other!.disabled = true;
-    vi.stubEnv("TYPESAFE_API_KEY", "configured-key");
+    vi.stubEnv("SYSTEMONE_API_KEY", "configured-key");
     const inspect = vi.fn(async (_state: McpExtensionState, input: JevEvaluateInput) => {
       expect(input.sources).toEqual(["demo"]);
       return choiceEvaluator("demo_tool_0")(_state, input, { purpose: "semantic-search" });
@@ -188,7 +188,7 @@ describe("semantic search", () => {
       const result = await gatewaySemantic(state, "invoices", evaluator);
       expect(result.details).toMatchObject({ backend: { requested: "semantic", used: "lexical", degraded: true, reason: code } });
     }
-    for (const code of ["credential_missing", "authentication_failed", "data_policy_denied", "invalid_response"] as const) {
+    for (const code of ["credential_missing", "credential_unavailable", "endpoint_unavailable", "authentication_failed", "payment_required", "data_policy_denied", "invalid_response"] as const) {
       const evaluator: SemanticSearchEvaluator = async () => ({ ok: false, error: { code, message: "hard failure" } });
       const result = await gatewaySemantic(state, "invoices", evaluator);
       expect(result.details).toMatchObject({ error: code, message: "hard failure" });

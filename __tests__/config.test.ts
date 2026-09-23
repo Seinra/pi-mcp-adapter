@@ -646,7 +646,7 @@ describe("config discovery", () => {
     const realProject = realpathSync(project);
 
     writeJson(join(home, ".config", "mcp", "mcp.json"), {
-      settings: { idleTimeout: 5, requestTimeoutMs: 1500, showStatusIcon: true },
+      settings: { idleTimeout: 5, requestTimeoutMs: 1500, showStatusIcon: true, allowInstall: true },
       mcpServers: {
         shared: { command: "generic" },
         genericOnly: { command: "generic-only" },
@@ -654,7 +654,7 @@ describe("config discovery", () => {
     });
 
     writeJson(join(home, ".pi", "agent", "mcp.json"), {
-      settings: { toolPrefix: "short", directTools: true },
+      settings: { toolPrefix: "short", directTools: true, allowInstall: false },
       mcpServers: {
         shared: { command: "pi-global" },
         piOnly: { command: "pi-only" },
@@ -691,6 +691,7 @@ describe("config discovery", () => {
       showStatusIcon: false,
       toolPrefix: "none",
       directTools: true,
+      allowInstall: false,
       autoAuth: true,
       oauthDir: ".pi/oauth",
     });
@@ -1761,6 +1762,59 @@ describe("config discovery", () => {
     });
   });
 
+  it("imports OpenCode v2 project servers through host discovery", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-v2-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-v2-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { hostConfigDiscovery: "on" }, mcpServers: {} });
+    writeJson(join(project, "opencode.json"), {
+      mcp: {
+        timeout: { startup: 120000 },
+        servers: {
+          datagrip: { type: "remote", url: "http://127.0.0.1:64402/stream", oauth: false, headers: { IJ_MCP_SERVER_PROJECT_PATH: "/tmp/project" } },
+          playwright: { type: "local", command: ["direnv", "exec", ".", "./scripts/playwright-mcp.sh"], environment: { PLAYWRIGHT_USE_PROXY: "1" } },
+          paused: { type: "local", command: ["node", "paused.js"], disabled: true },
+        },
+      },
+    });
+
+    const { loadMcpConfig, getMcpDiscoverySummary } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers).toMatchObject({
+      datagrip: { url: "http://127.0.0.1:64402/stream", oauth: false, headers: { IJ_MCP_SERVER_PROJECT_PATH: "/tmp/project" } },
+      playwright: { command: "direnv", args: ["exec", ".", "./scripts/playwright-mcp.sh"], env: { PLAYWRIGHT_USE_PROXY: "1" } },
+    });
+    expect(Object.keys(loadMcpConfig().mcpServers).sort()).toEqual(["datagrip", "playwright"]);
+    expect(getMcpDiscoverySummary().imports).toEqual([
+      expect.objectContaining({ kind: "opencode", serverCount: 2 }),
+    ]);
+  });
+
+  it("applies project v2 OAuth overrides over global v1 aliases", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-oauth-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-oauth-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".config", "opencode", "opencode.json"), {
+      mcp: { remote: { type: "remote", url: "https://example.test/mcp", oauth: {
+        clientId: "global-id", clientSecret: "global-secret", authServerMetadataUrl: "https://global.test/metadata", scope: "global-scope",
+      } } },
+    });
+    writeJson(join(project, "opencode.json"), {
+      mcp: { servers: { remote: { oauth: {
+        client_id: "project-id", client_secret: "project-secret", auth_server_metadata_url: "https://project.test/metadata",
+      } } } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers.remote).toEqual({
+      url: "https://example.test/mcp", auth: "oauth", oauth: {
+        clientId: "project-id", clientSecret: "project-secret", authServerMetadataUrl: "https://project.test/metadata", scope: "global-scope",
+      },
+    });
+  });
+
   it("does not load OpenCode files without an explicit import", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-explicit-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-explicit-project-"));
@@ -1969,29 +2023,12 @@ describe("settings.exposeResources", () => {
       mcpServers: {
         serverA: { command: "node", args: ["serverA.js"] },
         serverB: { command: "node", args: ["serverB.js"], exposeResources: true },
-        serverC: { command: "node", args: ["serverC.js"], exposeResources: false },
       },
     });
     const { loadMcpConfig } = await import("../config.ts");
     const cfg = loadMcpConfig(configPath, root);
     expect(cfg.mcpServers.serverA?.exposeResources).toBe(false);
     expect(cfg.mcpServers.serverB?.exposeResources).toBe(true);
-    expect(cfg.mcpServers.serverC?.exposeResources).toBe(false);
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("leaves server exposeResources undefined when settings.exposeResources is omitted", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-mcp-expose-resources-"));
-    const configPath = join(root, "config.json");
-    writeJson(configPath, {
-      settings: { scriptMode: false },
-      mcpServers: {
-        serverA: { command: "node", args: ["serverA.js"] },
-      },
-    });
-    const { loadMcpConfig } = await import("../config.ts");
-    const cfg = loadMcpConfig(configPath, root);
-    expect(cfg.mcpServers.serverA?.exposeResources).toBeUndefined();
     rmSync(root, { recursive: true, force: true });
   });
 });

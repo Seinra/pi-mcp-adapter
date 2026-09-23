@@ -114,10 +114,10 @@ export async function semanticSearch(
   try {
     settings = resolveSemanticJevSettings(state);
   } catch {
-    return { ok: false, error: { code: "invalid_request", message: "Invalid TypeSafe semantic search settings." } };
+    return { ok: false, error: { code: "invalid_request", message: "Invalid Jev semantic search settings." } };
   }
   if (!settings.semanticSearch) {
-    return { ok: false, error: { code: "disabled", message: "TypeSafe semantic search is disabled." } };
+    return { ok: false, error: { code: "disabled", message: "Jev semantic search is disabled." } };
   }
   if (settings.allowedServers.length === 0) {
     return { ok: false, error: { code: "data_policy_denied", message: "Semantic search is enabled, but settings.jev.allowedServers is empty. Run /mcp jev setup or allow specific MCP servers." } };
@@ -166,7 +166,7 @@ export async function semanticSearch(
   }
   const answer = envelope.data.answers.match;
   if (!answer || answer.type !== "choice") {
-    return { ok: false, error: { code: "invalid_response", message: "TypeSafe returned an invalid semantic search response." } };
+    return { ok: false, error: { code: "invalid_response", message: "Jev returned an invalid semantic search response." } };
   }
   const ranked = candidates
     .map(candidate => ({ candidate, probability: answer.probabilities[candidate.id] ?? 0 }))

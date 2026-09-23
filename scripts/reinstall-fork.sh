@@ -45,8 +45,8 @@ grep -q "installEnvelopeReshaping" "$DEST/server-manager.ts" ||
   fail "server-manager.ts in $DEST has no reshape hooks (official build?)"
 grep -q "envelope-reshape" "$DEST/package.json" ||
   fail "package.json in $DEST lacks the envelope-reshape files entry"
-grep -q '"version": "2.36.0"' "$DEST/package.json" ||
-  fail "unexpected version in $DEST/package.json (expected fork on 2.36.0)"
+grep -q '"version": "2.37.0"' "$DEST/package.json" ||
+  fail "unexpected version in $DEST/package.json (expected fork on 2.37.0)"
 
 info "checking for dangling relative imports in installed build"
 missing=0

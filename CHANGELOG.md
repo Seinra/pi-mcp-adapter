@@ -7,13 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenCode v2 configs now import. Servers under `mcp.servers` are picked up, `disabled: true` servers are skipped, and the snake_case OAuth fields `client_id`, `client_secret`, and `auth_server_metadata_url` are mapped. OpenCode v1 configs keep working. Thanks to [@sleroq](https://github.com/sleroq) for [PR #650](https://github.com/nicobailon/pi-mcp-adapter/pull/650).
+- Tools from Rust MCP servers, such as DBX, no longer print Ajv `unknown format "uint64" ignored` warnings on every call. Number formats like `uint64`, `uint32`, `uint`, and `uint8` are now recognized, and `type`/`minimum` still validate the values. Thanks to [@nightlitten](https://github.com/nightlitten) for [#649](https://github.com/nicobailon/pi-mcp-adapter/issues/649).
+
+## [2.37.0] - 2026-09-23
+
+### Highlights
+
+- Use Jev semantic search with other System One providers, such as OpenCode Zen, Command Code, or OpenRouter, by setting `SYSTEMONE_ENDPOINT`.
+- Stop agents from installing new MCP servers with `settings.allowInstall: false`.
+- Turn off resource tools for every server with one `settings.exposeResources: false` setting.
+- Start Pi without waiting on MCP servers even when cached tool metadata is missing, with `settings.deferWithMissingMetadata`.
+
 ### Added
 
-- Added `settings.exposeResources` to disable resource-tool synthesis globally while allowing per-server overrides. Thanks to [@rakesh-vs](https://github.com/rakesh-vs) for [#636](https://github.com/nicobailon/pi-mcp-adapter/pull/636).
+- Jev can send System One requests to any HTTPS provider endpoint set in `SYSTEMONE_ENDPOINT`. TypeSafe stays the default. API keys are stored per endpoint, and an invalid endpoint turns Jev off instead of quietly falling back to TypeSafe. Thanks to [@jagaliano](https://github.com/jagaliano) for [PR #645](https://github.com/nicobailon/pi-mcp-adapter/pull/645).
+- `settings.deferWithMissingMetadata: true` lets Pi start without connecting to MCP servers even when their cached metadata is missing or out of date. Those servers show no tools until the first MCP call loads them. Thanks to [@j62268781-alt](https://github.com/j62268781-alt) for [#641](https://github.com/nicobailon/pi-mcp-adapter/issues/641).
+- `settings.allowInstall: false` blocks agents from installing remote MCP servers with `mcp({ action: "install" })`, for headless or locked-down setups. Thanks to [@gastmaier](https://github.com/gastmaier) for [#638](https://github.com/nicobailon/pi-mcp-adapter/issues/638).
+- `settings.exposeResources: false` hides resource tools for every server. A server's own `exposeResources` setting still wins. Thanks to [@rakesh-vs](https://github.com/rakesh-vs) for [PR #636](https://github.com/nicobailon/pi-mcp-adapter/pull/636).
 
 ### Changed
 
-- Added compatibility with Pi 0.87.0.
+- The Jev key command is now `pi-mcp-adapter key set systemone`, and the environment variable is `SYSTEMONE_API_KEY`. The old `key set typesafe` command still works, and `TYPESAFE_API_KEY` still works with the default TypeSafe endpoint.
+- Supports Pi 0.87.
+
+### Fixed
+
+- `getMcpOAuthTokensForUrl` no longer returns an expired access token when no refresh token is stored, so other extensions see a signed-out server instead of sending a dead token. Thanks to [@benjaminsirb](https://github.com/benjaminsirb) for [#644](https://github.com/nicobailon/pi-mcp-adapter/issues/644).
+- Tools in `directTools: "search"` mode now stay inactive until a search selects them, even if another extension turns them back on. Tools a search activates stay on until the session ends. Thanks to [@VoidInTheShell](https://github.com/VoidInTheShell) for [PR #640](https://github.com/nicobailon/pi-mcp-adapter/pull/640).
 
 ## [2.36.0] - 2026-09-21
 

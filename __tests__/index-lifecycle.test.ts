@@ -259,13 +259,14 @@ function registeredCommand(api: ReturnType<typeof createPi>["api"], name: string
   return api.registerCommand.mock.calls.find((call: any[]) => call[0] === name)?.[1];
 }
 
+function cacheEntry(definition: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return { configHash: computeServerHash(definition), cachedAt: Date.now(), tools: [{ name: "search" }], resources: [], ...extra };
+}
+
 function cacheLazyServer(definition: Record<string, unknown>, tools = [{ name: "search" }]) {
   const config = { mcpServers: { demo: definition } };
   mocks.loadMcpConfig.mockReturnValue(config);
-  mocks.loadMetadataCache.mockReturnValue({
-    version: 1,
-    servers: { demo: { configHash: computeServerHash(definition), cachedAt: Date.now(), tools, resources: [] } },
-  });
+  mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { demo: cacheEntry(definition, { tools }) } });
   return config;
 }
 
@@ -1071,6 +1072,34 @@ describe("mcpAdapter session lifecycle", () => {
     expect(result.details.path).toBe("/tmp/agent/mcp.json");
   });
 
+  it("denies agent install before parsing or side effects", async () => {
+    const state = createState();
+    state.config.settings = { allowInstall: false };
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { allowInstall: false } });
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, {});
+    const proxyTool = registeredTool(api, "mcp");
+    const result = await proxyTool.execute(
+      "call-install",
+      { action: "install", url: "not a URL" },
+      undefined,
+      undefined,
+      { cwd: "/tmp/project" },
+    );
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "MCP install is disabled by configuration." }],
+      details: { mode: "install", error: "install_disabled" },
+    });
+    expect(mocks.installModuleStarted).not.toHaveBeenCalled();
+    expect(state.lifecycle.registerServer).not.toHaveBeenCalled();
+    expect(mocks.executeConnect).not.toHaveBeenCalled();
+    expect(mocks.executeAuthStart).not.toHaveBeenCalled();
+    expect(mocks.writeSharedServerEntry).not.toHaveBeenCalled();
+  });
+
   it("persists an OAuth MCP URL and starts watched authorization", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
@@ -1275,7 +1304,7 @@ describe("mcpAdapter session lifecycle", () => {
     const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
     const actualCache = await vi.importActual<typeof import("../metadata-cache.ts")>("../metadata-cache.ts");
     const config = {
-      settings: { disableProxyTool: true as const, scriptMode: false },
+      settings: { disableProxyTool: true as const, scriptMode: false, deferWithMissingMetadata: true },
       mcpServers: {
         demo: {
           url: "https://demo.example.com/mcp",
@@ -1350,13 +1379,14 @@ describe("mcpAdapter session lifecycle", () => {
     const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
     mcpAdapter(api);
     await handlers.get("session_start")?.({}, {});
-    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
 
     expect(actualCache.isServerCacheValid(diskEntry, config.mcpServers.demo)).toBe(false);
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_lookup" }));
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
 
     const first = await proxyTool.execute("call-1", { connect: "demo" });
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
     expect(first.addedToolNames).toEqual(["demo_lookup", "demo_read_guide"]);
     expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "demo_read_guide"]);
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_unselected" }));
@@ -2528,6 +2558,30 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.executeStatus).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the gateway for a valid direct server plus an invalid proxy-only server", async () => {
+    const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+    const validDirect = { command: "valid-direct", directTools: true };
+    const invalidProxy = { command: "invalid-proxy" };
+    const config = {
+      settings: { deferWithMissingMetadata: true, disableProxyTool: true },
+      mcpServers: { validDirect, invalidProxy },
+    };
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: { validDirect: cacheEntry(validDirect), invalidProxy: cacheEntry(invalidProxy, { ttlMs: 0 }) },
+    });
+    mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
+
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+    expect(registeredTool(api, "mcp")).toBeDefined();
+    expect(registeredTool(api, "validDirect_search")).toBeDefined();
+    expect(registeredTool(api, "mcp__invalidProxy")).toBeUndefined();
+  });
+
   it("renders the large direct-tools advisory once without writing it to the UI console", async () => {
     const config = { mcpServers: { demo: { command: "demo", directTools: true } } };
     const state = createState();
@@ -2728,21 +2782,112 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).not.toHaveBeenCalled();
   });
 
-  it("initializes when any enabled server lacks valid cached metadata", async () => {
+  it("initializes by default when any enabled server has zero-TTL metadata", async () => {
     const cachedDefinition = { command: "cached" };
-    const missingDefinition = { command: "missing" };
-    const config = { mcpServers: { cached: cachedDefinition, missing: missingDefinition } };
+    const invalidDefinition = { command: "invalid" };
+    const config = { mcpServers: { cached: cachedDefinition, invalid: invalidDefinition } };
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.loadMetadataCache.mockReturnValue({
       version: 1,
-      servers: { cached: { configHash: computeServerHash(cachedDefinition), cachedAt: Date.now(), tools: [], resources: [] } },
+      servers: { cached: cacheEntry(cachedDefinition, { tools: [] }), invalid: cacheEntry(invalidDefinition, { tools: [], ttlMs: 0 }) },
     });
     mocks.initializeMcp.mockResolvedValue(createState());
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
 
     await vi.waitFor(() => expect(mocks.initializeMcp).toHaveBeenCalledTimes(1));
+  });
+
+  it.each(["eager", "keep-alive"] as const)("starts for %s lifecycle despite metadata deferral", async (lifecycle) => {
+    mocks.loadMcpConfig.mockReturnValue({
+      settings: { deferWithMissingMetadata: true },
+      mcpServers: { demo: { command: "demo", lifecycle } },
+    });
+    mocks.initializeMcp.mockResolvedValue(createState());
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    await vi.waitFor(() => expect(mocks.initializeMcp).toHaveBeenCalledTimes(1));
+  });
+
+  it("starts for a cold environment-selected direct tool despite metadata deferral", async () => {
+    process.env.MCP_DIRECT_TOOLS = "demo/search";
+    mocks.loadMcpConfig.mockReturnValue({
+      settings: { deferWithMissingMetadata: true },
+      mcpServers: { demo: { command: "demo" } },
+    });
+    mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["demo"]);
+    mocks.initializeMcp.mockResolvedValue(createState());
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the session cwd opt into deferral when the early config cannot defer", async () => {
+    const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+    const earlyConfig = { mcpServers: { early: { command: "early" } } };
+    const direct = { command: "cwd-direct", directTools: true };
+    const sessionConfig = {
+      settings: { deferWithMissingMetadata: true },
+      mcpServers: { direct, missing: { command: "missing" } },
+    };
+    mocks.loadMcpConfig.mockReturnValueOnce(earlyConfig).mockReturnValue(sessionConfig);
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { direct: cacheEntry(direct) } });
+    mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
+
+    const { api, handlers } = await loadAdapter();
+    expect(registeredTool(api, "direct_search")).toBeUndefined();
+
+    await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/session/project" });
+
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+    expect(registeredTool(api, "direct_search")).toBeDefined();
+    expect(registeredTool(api, "mcp")).toBeDefined();
+  });
+
+  it("removes early cached surfaces when the session cwd removes their servers", async () => {
+    const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+    const direct = { command: "direct", directTools: true };
+    const proxy = { command: "proxy" };
+    const earlyConfig = { mcpServers: { direct, proxy } };
+    mocks.loadMcpConfig
+      .mockReturnValueOnce(earlyConfig)
+      .mockReturnValue({ settings: { deferWithMissingMetadata: true }, mcpServers: {} });
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: { direct: cacheEntry(direct), proxy: cacheEntry(proxy, { prompts: [{ name: "brief" }] }) },
+    });
+    mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
+
+    const { api, handlers } = await loadAdapter();
+    expect(registeredTool(api, "direct_search")).toBeDefined();
+    expect(registeredTool(api, "mcp__proxy")).toBeDefined();
+    expect(registeredCommand(api, "mcp__proxy__brief")).toBeUndefined();
+
+    await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/session/project" });
+
+    expect(mocks.loadMcpConfig).toHaveBeenLastCalledWith(undefined, "/session/project");
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+    expect(api.unregisterTool).toHaveBeenCalledWith("direct_search");
+    expect(api.unregisterTool).toHaveBeenCalledWith("mcp__proxy");
+    expect(registeredCommand(api, "mcp__proxy__brief")).toBeUndefined();
+  });
+
+  it("registers cached prompt commands at session start without metadata deferral", async () => {
+    const definition = { command: "demo" };
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: { demo: definition } });
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { demo: cacheEntry(definition, { tools: [], prompts: [{ name: "brief" }] }) } });
+
+    const { api, handlers } = await loadAdapter();
+
+    expect(registeredCommand(api, "mcp__demo__brief")).toBeUndefined();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    expect(registeredCommand(api, "mcp__demo__brief")).toBeDefined();
   });
 
   it.each([
@@ -3576,17 +3721,31 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     const { default: mcpAdapter } = await import("../index.ts");
     const { api, handlers } = createPi();
     const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    let actionMethodsReady = false;
+    api.getActiveTools.mockImplementation(() => {
+      if (!actionMethodsReady) throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+      return activeTools();
+    });
     mcpAdapter(api);
+    const activeToolsBeforeSession = activeTools();
+    actionMethodsReady = true;
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     await Promise.resolve();
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-    return { api, activeTools, proxyTool };
+    return { api, handlers, activeTools, activeToolsBeforeSession, proxyTool };
   }
 
-  it("registers lazy tools but holds them out of the active set", async () => {
-    const { api, activeTools } = await boot();
-    expect(api.registerTool.mock.calls.map((call: any[]) => call[0].name)).toEqual(expect.arrayContaining(["demo_alpha", "demo_beta"]));
+  it("holds registered lazy tools at session start", async () => {
+    const { activeTools, activeToolsBeforeSession } = await boot();
+    expect(activeToolsBeforeSession).toEqual(expect.arrayContaining(["demo_alpha", "demo_beta"]));
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
+  it("re-holds unsearched tools reactivated before a request", async () => {
+    const { api, handlers, activeTools } = await boot();
+    api.setActiveTools([...activeTools(), "demo_alpha"]);
+    await handlers.get("before_agent_start")?.({}, {});
     expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 
@@ -3596,14 +3755,32 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     expect(proxyTool).toBeDefined();
   });
 
-  it("search activates the matches additively and reports them as addedToolNames", async () => {
-    const { activeTools, proxyTool } = await boot();
+  it("keeps search activations until the next session", async () => {
+    const { handlers, activeTools, proxyTool } = await boot();
     mocks.executeSearch.mockReturnValue(searchResult("alpha", "gamma"));
     const result = await proxyTool.execute("call-1", { search: "q" });
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
     expect(result.addedToolNames).toEqual(["demo_alpha", "demo_gamma"]);
     expect(result.content[0].text).toContain("Activated as direct tools: demo_alpha, demo_gamma");
     expect(result.content[0].text).toContain("Found 2"); // the search text is kept
+    await handlers.get("before_agent_start")?.({}, {});
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
+    await handlers.get("session_start")?.({}, {});
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
+  it("does not let a search from a replaced session reactivate tools", async () => {
+    const { handlers, activeTools, proxyTool } = await boot();
+    const pendingSearch = createDeferred<ReturnType<typeof searchResult>>();
+    mocks.executeSearch.mockReturnValue(pendingSearch.promise);
+    const execution = proxyTool.execute("call-1", { search: "q" });
+    await vi.waitFor(() => expect(mocks.executeSearch).toHaveBeenCalledOnce());
+
+    await handlers.get("session_start")?.({}, {});
+    pendingSearch.resolve(searchResult("alpha"));
+
+    await expect(execution).rejects.toThrow("MCP extension session restarted");
+    expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 
   it("a search-mode tool selected eagerly becomes active, even if search never activated it", async () => {

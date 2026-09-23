@@ -23,7 +23,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe("Jev integration boundaries", () => {
   it("does no credential or network I/O during extension registration", () => {
     vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "memory");
-    vi.stubEnv("TYPESAFE_API_KEY", "configured-but-inert");
+    vi.stubEnv("SYSTEMONE_API_KEY", "configured-but-inert");
     resetTestSecureKeyring();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const registerTool = vi.fn();

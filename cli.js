@@ -79,10 +79,10 @@ function printHelp(log = console.log) {
   log("  pi-mcp-adapter token status <server>  Report whether a stored token matches the configured URL");
   log("  pi-mcp-adapter token remove <server>  Remove the stored token");
   log("");
-  log("TypeSafe API key storage:");
-  log("  pi-mcp-adapter key set typesafe     Store a key read from stdin (masked prompt or pipe; never argv)");
-  log("  pi-mcp-adapter key status typesafe  Report the effective credential source without revealing it");
-  log("  pi-mcp-adapter key remove typesafe  Remove the stored key");
+  log("Jev API key storage (SYSTEMONE_ENDPOINT selects the provider endpoint):");
+  log("  pi-mcp-adapter key set systemone     Store a key read from stdin (masked prompt or pipe; never argv)");
+  log("  pi-mcp-adapter key status systemone  Report the effective credential source without revealing it");
+  log("  pi-mcp-adapter key remove systemone  Remove the stored key");
 }
 
 function readJsonFile(filePath) {
@@ -359,8 +359,9 @@ async function runToken(argv, log, error, stdin) {
 
 async function runKey(argv, log, error, stdin) {
   const [action, provider, ...extra] = argv;
-  if (!["set", "status", "remove"].includes(action) || provider !== "typesafe") {
-    error("Usage: pi-mcp-adapter key <set|status|remove> typesafe");
+  // `typesafe` is the pre-endpoint provider name, kept for existing scripts.
+  if (!["set", "status", "remove"].includes(action) || (provider !== "systemone" && provider !== "typesafe")) {
+    error("Usage: pi-mcp-adapter key <set|status|remove> systemone");
     error("`key set` reads the API key from stdin only. Never pass the key as an argument.");
     return 1;
   }
@@ -371,31 +372,41 @@ async function runKey(argv, log, error, stdin) {
   let store;
   try { store = await import("./dist/jev-key-store.js"); }
   catch (err) {
-    error("Unable to load TypeSafe key command module.");
+    error("Unable to load Jev key command module.");
     error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
-
-  if (action === "set") {
-    const apiKey = await readSecretFromStdin(stdin, "Enter TypeSafe API key (input hidden): ");
-    if (!apiKey) { error("No API key provided on stdin."); return 1; }
-    try { store.saveJevApiKey(apiKey); }
-    catch (err) { error(err instanceof Error ? err.message : "TypeSafe API key could not be stored."); return 1; }
-    log("TypeSafe API key stored in the OS secure credential store.");
-    if (Object.hasOwn(process.env, "TYPESAFE_API_KEY")) log("Note: TYPESAFE_API_KEY is present and overrides the stored key.");
-    return 0;
+  const resolution = store.resolveJevEndpoint();
+  if (resolution.status === "unavailable") {
+    error("SYSTEMONE_ENDPOINT is set but invalid, so no key can be stored or read for it.");
+    error(resolution.message);
+    return 1;
   }
+  const endpoint = resolution.endpoint;
+
   if (action === "status") {
-    const status = store.resolveJevCredential();
-    if (status.status === "present") { log(`source=${status.source}`); return 0; }
+    const status = store.resolveJevCredential(process.env, endpoint);
+    if (status.status === "present") { log(`source=${status.source}`); log(`endpoint=${endpoint.href}`); return 0; }
     if (status.status === "unavailable") { error(`unavailable: ${status.message}`); return 1; }
     log("missing");
     return 1;
   }
-  try { store.removeJevApiKey(); }
-  catch (err) { error(err instanceof Error ? err.message : "TypeSafe API key could not be removed."); return 1; }
-  log("TypeSafe API key removed from the OS secure credential store.");
-  if (Object.hasOwn(process.env, "TYPESAFE_API_KEY")) log("TYPESAFE_API_KEY is still present and overrides the stored key.");
+  if (action === "set") {
+    const apiKey = await readSecretFromStdin(stdin, `Enter Jev API key for ${endpoint.href} (input hidden): `);
+    if (!apiKey) { error("No API key provided on stdin."); return 1; }
+    try { store.saveJevApiKey(apiKey, endpoint); }
+    catch (err) { error(err instanceof Error ? err.message : "Jev API key could not be stored."); return 1; }
+    log("Jev API key stored in the OS secure credential store.");
+    log(`endpoint=${endpoint.href}`);
+  } else {
+    try { store.removeJevApiKey(endpoint); }
+    catch (err) { error(err instanceof Error ? err.message : "Jev API key could not be removed."); return 1; }
+    log("Jev API key removed from the OS secure credential store.");
+  }
+  if (Object.hasOwn(process.env, "SYSTEMONE_API_KEY")) log("Note: SYSTEMONE_API_KEY is present and overrides the stored key.");
+  else if (Object.hasOwn(process.env, "TYPESAFE_API_KEY")) log(endpoint.href === store.JEV_DEFAULT_ENDPOINT
+    ? "Note: TYPESAFE_API_KEY is present and overrides the stored key."
+    : `Note: TYPESAFE_API_KEY is ignored for ${endpoint.href}; it is a TypeSafe credential and is never sent there.`);
   return 0;
 }
 

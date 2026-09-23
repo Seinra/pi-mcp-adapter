@@ -75,7 +75,7 @@ export async function setupJevSemanticSearch(
   if (credential.status !== "present") {
     const detail = credential.status === "unavailable" ? ` ${credential.message}` : "";
     ctx.ui.notify(
-      `Jev needs a TypeSafe API key.${detail}\nRun \`pi-mcp-adapter key set typesafe\` in a terminal, then run \`/mcp jev setup\` again.`,
+      `Jev needs a System One API key.${detail}\nRun \`pi-mcp-adapter key set systemone\` in a terminal, then run \`/mcp jev setup\` again.`,
       "error",
     );
     return false;
@@ -104,7 +104,7 @@ export async function setupJevSemanticSearch(
   if (choice.startsWith("Use all ")) {
     const confirmed = await ctx.ui.confirm(
       "Share MCP tool metadata with Jev?",
-      `Semantic searches send the query text, server names, tool paths, tool names, and descriptions from ${servers.length} servers to TypeSafe.${payloadDisclosure}`,
+      `Semantic searches send the query text, server names, tool paths, tool names, and descriptions from ${servers.length} servers to the configured Jev endpoint.${payloadDisclosure}`,
     );
     if (!confirmed) return false;
     allowedServers = servers;
@@ -113,7 +113,7 @@ export async function setupJevSemanticSearch(
     for (const server of servers) {
       if (await ctx.ui.confirm(
         `Allow ${server}?`,
-        `Semantic searches send the query text, server name, tool paths, tool names, and descriptions to TypeSafe.${payloadDisclosure}`,
+        `Semantic searches send the query text, server name, tool paths, tool names, and descriptions to the configured Jev endpoint.${payloadDisclosure}`,
       )) allowedServers.push(server);
     }
     if (allowedServers.length === 0) {
